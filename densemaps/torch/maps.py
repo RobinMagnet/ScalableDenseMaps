@@ -32,14 +32,17 @@ class PointWiseMap:
     def cpu(self):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).cpu())
+        return self
     
     def cuda(self):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).cuda())
+        return self
     
     def to(self, device):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).to(device))
+        return self
 
     def pull_back(self, f):
         raise NotImplementedError
