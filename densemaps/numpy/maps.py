@@ -189,7 +189,7 @@ class EmbPreciseMap(PreciseMap):
     """
     Point to barycentric map, computed from embeddings.
     """
-    def __init__(self, emb1, emb2, faces1, clear_cache=True):
+    def __init__(self, emb1, emb2, faces1):
         self.emb1 = emb1  # (N1, K)
         self.emb2 = emb2  # (N2, K)
 
