@@ -6,13 +6,14 @@ import scipy.sparse as sparse
 
 from .nn_utils import knn_query
 
-def nn_query_precise_np(vert_emb, faces, points_emb, return_dist=False, batch_size=None):
+def nn_query_precise_np(vert_emb, faces, points_emb, return_dist=False, batch_size=None , n_jobs=1):
 
         # n2,  (n2,3)
     face_match, bary_coords = project_pc_to_triangles(vert_emb, faces, points_emb,
                                                         precompute_dmin=batch_size is None,
                                                         batch_size=batch_size,
                                                         return_sparse=False,
+                                                        n_jobs=n_jobs,
                                                         verbose=False)
     
     if return_dist:

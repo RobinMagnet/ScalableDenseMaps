@@ -182,11 +182,12 @@ class EmbP2PMap(P2PMap):
     """
     Point to point map, computed from embeddings.
     """
-    def __init__(self, emb1, emb2):
+    def __init__(self, emb1, emb2, n_jobs=1):
         self.emb1 = emb1 # (N1, K) or (N1, K)
         self.emb2 = emb2  # (N2, K) or (N2, K)
+        self.n_jobs = n_jobs
 
-        p2p_21 = knn_query(self.emb1, self.emb2)
+        p2p_21 = knn_query(self.emb1, self.emb2, n_jobs=n_jobs)  # (N2, )
         
         super().__init__(p2p_21, n1=self.emb1.shape[-2])
         self._add_array_name(["emb1", "emb2", "p2p_21"])
@@ -195,12 +196,12 @@ class EmbPreciseMap(PreciseMap):
     """
     Point to barycentric map, computed from embeddings.
     """
-    def __init__(self, emb1, emb2, faces1):
+    def __init__(self, emb1, emb2, faces1, n_jobs=1):
         self.emb1 = emb1  # (N1, K)
         self.emb2 = emb2  # (N2, K)
 
         
-        v2face_21, bary_coords = nn_query_precise_np(self.emb1, faces1, self.emb2, return_dist=False, batch_size=min(2000, emb2.shape[0]))
+        v2face_21, bary_coords = nn_query_precise_np(self.emb1, faces1, self.emb2, return_dist=False, batch_size=min(2000, emb2.shape[0]), n_jobs=n_jobs)
 
         # th.cuda.empty_cache()
         super().__init__(v2face_21, bary_coords, faces1)
