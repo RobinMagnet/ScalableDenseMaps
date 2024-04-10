@@ -238,7 +238,7 @@ class PreciseMap(PointWiseMap):
     def mT(self):
         target_faces = self.faces1[self.v2face_21]  # (n2, 3)
 
-        In = th.tile(th.arange(self.n2), 3)  # (3*n2)
+        In = th.tile(th.arange(self.n2), (3,))  # (3*n2)
         Jn = th.concatenate([target_faces[:,0], target_faces[:,1], target_faces[:,2]])  # (3*n2)
         Sn = th.concatenate([self.bary_coords[:,0], self.bary_coords[:,1], self.bary_coords[:,2]])  # (3*n2)
 
