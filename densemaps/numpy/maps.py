@@ -64,6 +64,9 @@ class SparseMap(PointWiseMap):
 
     def get_nn(self):
         return self.map.argmax(-1)  # (N2, )
+    
+    def _to_sparse(self):
+        return self.map
 
 class P2PMap(PointWiseMap):
     """
@@ -133,8 +136,11 @@ class P2PMap(PointWiseMap):
     def mT(self):
         assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
         # sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
-        P21 = sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n1))
+        P21 = self._to_sparse()
         return SparseMap(P21.T)
+    
+    def _to_sparse(self):
+        return sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n1))
 
 class PreciseMap(SparseMap):
     """
