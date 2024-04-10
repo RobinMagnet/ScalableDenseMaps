@@ -153,7 +153,7 @@ class P2PMap(PointWiseMap):
 
     @property
     def mT(self):
-        sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
+        sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2, device=self.p2p_21.device), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
         return SparseMap(sparsemat).mT
     
     def _to_np_sparse(self):
