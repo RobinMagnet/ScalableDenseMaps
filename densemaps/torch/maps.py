@@ -2,8 +2,12 @@ import sys
 import os
 from pathlib import Path
 
+import numpy as np
+
 import torch as th
 import torch.nn as nn
+
+import scipy.sparse as sparse
 
 try:
     import pykeops
@@ -14,6 +18,8 @@ except ImportError:
 from .point_to_triangle import nn_query_precise_torch
 
 from .nn_utils import nn_query, compute_sqdistmat
+
+from ..numpy.point_to_triangle import barycentric_to_precise
 
 class PointWiseMap:
     def __init__(self, tensor_names=None):
@@ -149,6 +155,11 @@ class P2PMap(PointWiseMap):
     def mT(self):
         sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
         return SparseMap(sparsemat).mT
+    
+    def _to_np_sparse(self):
+        assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
+
+        return sparse.csc_matrix((np.ones(self.p2p_21.shape[0]), (np.arange(self.n2), self.p2p_21.cpu().numpy())), shape=(self.n2, self.n1))
 
 class PreciseMap(PointWiseMap):
     """
@@ -234,6 +245,8 @@ class PreciseMap(PointWiseMap):
         precise_map = th.sparse_coo_tensor(th.stack([In, Jn]), Sn, (self.n2, self.n1)).coalesce()
         return SparseMap(precise_map).mT
 
+    def _to_np_sparse(self):
+        return barycentric_to_precise(self.faces1.cpu().numpy(), self.v2face_21.cpu().numpy(), self.bary_coords.cpu().numpy())
 class EmbP2PMap(P2PMap):
     """
     Point to point map, computed from embeddings.
