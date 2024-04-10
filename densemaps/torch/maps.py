@@ -136,7 +136,7 @@ class P2PMap(PointWiseMap):
             if self.p2p_21.ndim == 1:
                 f_pb = f[:, self.p2p_21]  # (B, n2, k)
             else:
-                f_pb = f[th.arange(f_pb.shape[0]).unsqueeze(1), self.p2p_21]
+                f_pb = f[th.arange(f.shape[0]).unsqueeze(1), self.p2p_21]
         else:
             raise ValueError('Function is only dim 1, 2 or 3')
     
@@ -154,7 +154,7 @@ class PreciseMap(PointWiseMap):
     """
     Point to barycentric map, using vertex to face and barycentric coordinates.
     """
-    def __init__(self, v2face_21, bary_coords, faces1, tensor_names=None):
+    def __init__(self, v2face_21, bary_coords, faces1):
         """
         Point to barycentric map from a set S2 to a surface S1.
 
@@ -291,7 +291,7 @@ class KernelDenseDistMap(PointWiseMap):
 
     def get_nn(self):
         if self._nn_map is None:
-            self._nn_map = self.log_matrix.argmax(-2)
+            self._nn_map = self.log_matrix.argmax(-1)
             self._add_tensor_name(["_nn_map"])
         return self._nn_map
 
@@ -339,8 +339,6 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
             dist = compute_sqdistmat(self.emb2, self.emb1, normalized=normalize_emb)  # (N2, N1)  or (B, N2, N1)
         elif dist_type == "inner":
             dist = - self.emb2 @ self.emb1.transpose(-2, -1)  # (N2, N1)  or (B, N2, N1)
-
-        # print(dist)
 
         self.dist_type = dist_type
 
@@ -423,12 +421,12 @@ class KernelDistMap(PointWiseMap):
         """
 
         f = pykeops.torch.Vj(0, dim)  # (B, 1, N1, p)
-        emb1_j = pykeops.torch.Vj(1, self.emb1.shape[1])  # (1, 1, N1, K)
-        emb2_i = pykeops.torch.Vi(2, self.emb1.shape[1])  # (1, N2, 1, K)
+        emb1_j = pykeops.torch.Vj(1, self.emb1.shape[-1])  # (1, 1, N1, K)
+        emb2_i = pykeops.torch.Vi(2, self.emb1.shape[-1])  # (1, N2, 1, K)
         sqblur = pykeops.torch.Pm(3, 1)  # (B, 1)
 
         if self.dist_type == "sqdist":
-            dist = -emb2_i.sqdist(emb1_j) / sqblur
+            dist = - emb2_i.sqdist(emb1_j) / sqblur
         elif self.dist_type == "inner":
             dist = (emb2_i | emb1_j) / sqblur
 

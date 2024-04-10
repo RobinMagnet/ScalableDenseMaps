@@ -27,7 +27,7 @@ def compute_sqdistmat(X, Y, normalized=False):
         # (..., N, 1) + (...,1, M)
         return th.square(X).sum(-1).unsqueeze(-1) + th.square(Y).sum(-1).unsqueeze(-2) - 2 * (X @ Y.mT)
     else:
-        return 2 - 2 * (X @ Y.transpose(-2, -1)) / X.shape[-1]
+        return 2 - 2 * X @ Y.mT
 
 def nn_query(X, Y, use_keops=None):
     """
