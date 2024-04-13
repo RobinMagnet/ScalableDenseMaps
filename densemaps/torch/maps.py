@@ -138,11 +138,13 @@ class P2PMap(PointWiseMap):
         
         if f.ndim == 1 or f.ndim == 2:  # (N1,) or (N1, p)
             f_pb = f[self.p2p_21]  # (n2, p) or (B, n2, p)
+            
         elif f.ndim == 3:
             if self.p2p_21.ndim == 1:
                 f_pb = f[:, self.p2p_21]  # (B, n2, k)
             else:
-                f_pb = f[th.arange(f.shape[0]).unsqueeze(1), self.p2p_21]
+                # f_pb = f[th.arange(f.shape[0]).unsqueeze(1), self.p2p_21]
+                f_pb = th.take_along_dim(f, self.p2p_21.unsqueeze(-1), dim=1)  # (B, n2, k)
         else:
             raise ValueError('Function is only dim 1, 2 or 3')
     
