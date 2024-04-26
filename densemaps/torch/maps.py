@@ -106,9 +106,13 @@ class P2PMap(PointWiseMap):
         self.p2p_21 = p2p_21  # (n2, ) or (B, n2)
 
         self.n2 = self.p2p_21.shape[-1]
-        self.n1 = n1
+        self._n1 = n1
 
         self.max_ind = self.p2p_21.max().item() if n1 is None else n1-1
+
+    @property
+    def n1(self):
+        return self._n1 if self._n1 is not None else self.max_ind+1
 
     @property
     def shape(self):

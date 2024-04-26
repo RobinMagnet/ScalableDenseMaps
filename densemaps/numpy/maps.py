@@ -87,13 +87,17 @@ class P2PMap(PointWiseMap):
         self.p2p_21 = p2p_21  # (n2, ) or (B, n2)
 
         self.n2 = self.p2p_21.shape[-1]
-        self.n1 = n1
+        self._n1 = n1
 
         self.max_ind = self.p2p_21.max().item() if n1 is None else n1-1
 
     @property
     def shape(self):
         return self.p2p_21.shape
+
+    @property
+    def n1(self):
+        return self._n1 if self._n1 is not None else self.max_ind+1
 
     def pull_back(self, f):
         """
@@ -140,7 +144,7 @@ class P2PMap(PointWiseMap):
         return SparseMap(P21.T)
 
     def _to_sparse(self):
-        return sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n1))
+        return sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n2))
 
 class PreciseMap(SparseMap):
     """
