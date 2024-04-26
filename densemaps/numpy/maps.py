@@ -21,7 +21,7 @@ class PointWiseMap:
     def _add_array_name(self, names):
         if type(names) is not list:
             names = [names]
-        
+
         for name in names:
             if name not in self.array_names:
                 self.array_names.append(name)
@@ -31,10 +31,10 @@ class PointWiseMap:
 
     def get_nn(self):
         raise NotImplementedError
-    
+
     def __matmul__(self, other):
         return self.pull_back(other)
-    
+
     @property
     def mT(self):
         raise NotImplementedError
@@ -58,13 +58,13 @@ class SparseMap(PointWiseMap):
     @property
     def mT(self):
         return SparseMap(self.map.T)
-    
+
     def pull_back(self, f):
         return self.map @ f
 
     def get_nn(self):
         return self.map.argmax(-1)  # (N2, )
-    
+
     def _to_sparse(self):
         return self.map
 
@@ -89,8 +89,8 @@ class P2PMap(PointWiseMap):
         self.n2 = self.p2p_21.shape[-1]
         self.n1 = n1
 
-        self.max_ind = self.p2p.max().item() if n1 is None else n1-1
-    
+        self.max_ind = self.p2p_21.max().item() if n1 is None else n1-1
+
     @property
     def shape(self):
         return self.p2p_21.shape
@@ -113,10 +113,10 @@ class P2PMap(PointWiseMap):
             raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-1]}')
         elif (f.ndim > 1 and f.shape[-2] <= self.max_ind):
             raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-2]}')
-        
+
         if f.ndim == 3 and self.p2p_21.ndim == 2:
             assert f.shape[0] == self.p2p_21.shape[0], "Batch size of f and p2p_21 should match"
-        
+
         if f.ndim == 1 or f.ndim == 2:  # (N1,) or (N1, p)
             f_pb = f[self.p2p_21]  # (n2, p) or (B, n2, p)
         elif f.ndim == 3:
@@ -126,7 +126,7 @@ class P2PMap(PointWiseMap):
                 f_pb = f[np.arange(f.shape[0])[:,None], self.p2p_21]
         else:
             raise ValueError('Function is only dim 1, 2 or 3')
-    
+
         return f_pb
 
     def get_nn(self):
@@ -138,7 +138,7 @@ class P2PMap(PointWiseMap):
         # sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
         P21 = self._to_sparse()
         return SparseMap(P21.T)
-    
+
     def _to_sparse(self):
         return sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n1))
 
@@ -154,7 +154,7 @@ class PreciseMap(SparseMap):
         -------------------
         v2face_21 : (n2,)
             Indices of the faces of S1 closest to each point of S2.
-        bary_coords : (n2, 3) 
+        bary_coords : (n2, 3)
             Barycentric coordinates of the points of S2 in the faces of S1.
         faces1 : (N1, 3)
             All the Faces of S1.
@@ -162,7 +162,7 @@ class PreciseMap(SparseMap):
         # super().__init__(array_names=["v2face_21", "bary_coords", "faces1"])
         if v2face_21.ndim == 2:
             raise ValueError('Batched version not implemented yet.')
-        
+
         # self.v2face_21 = v2face_21  # (n2,) or (B, n2)
         # self.bary_coords = bary_coords  # (N2, 3)  or (B, N2, 3)
         # self.faces1 = faces1  # (N1, 3)
@@ -173,7 +173,7 @@ class PreciseMap(SparseMap):
         sparse_map = barycentric_to_precise(faces1, v2face_21, bary_coords, n_vertices=None)  # (n2, n1)
         super().__init__(sparse_map)
         self._nn_map = None
-    
+
     @property
     def shape(self):
         return self.sparse_map.shape
@@ -188,7 +188,7 @@ class EmbP2PMap(P2PMap):
         self.n_jobs = n_jobs
 
         p2p_21 = knn_query(self.emb1, self.emb2, n_jobs=n_jobs)  # (N2, )
-        
+
         super().__init__(p2p_21, n1=self.emb1.shape[-2])
         self._add_array_name(["emb1", "emb2", "p2p_21"])
 
@@ -200,7 +200,7 @@ class EmbPreciseMap(PreciseMap):
         self.emb1 = emb1  # (N1, K)
         self.emb2 = emb2  # (N2, K)
 
-        
+
         v2face_21, bary_coords = nn_query_precise_np(self.emb1, faces1, self.emb2, return_dist=False, batch_size=min(2000, emb2.shape[0]), n_jobs=n_jobs)
 
         # th.cuda.empty_cache()
@@ -225,9 +225,9 @@ class KernelDenseDistMap(PointWiseMap):
     def _to_dense(self):
         if self.lse_row is None:
             self.lse_row = logsumexp(self.log_matrix, dim=-1)  # (..., N2)
-        
+
         return np.exp(self.log_matrix - self.lse_row[...,None])
-    
+
     def pull_back(self, f):
         if type(f) is KernelDenseDistMap:
             return self._to_dense() @ f._to_dense()

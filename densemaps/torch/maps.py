@@ -30,21 +30,21 @@ class PointWiseMap:
     def _add_tensor_name(self, names):
         if type(names) is not list:
             names = [names]
-        
+
         for name in names:
             if name not in self.tensor_names:
                 self.tensor_names.append(name)
-    
+
     def cpu(self):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).cpu())
         return self
-    
+
     def cuda(self):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).cuda())
         return self
-    
+
     def to(self, device):
         for name in self.tensor_names:
             setattr(self, name, getattr(self, name).to(device))
@@ -55,10 +55,10 @@ class PointWiseMap:
 
     def get_nn(self):
         raise NotImplementedError
-    
+
     def __matmul__(self, other):
         return self.pull_back(other)
-    
+
     @property
     def mT(self):
         raise NotImplementedError
@@ -75,7 +75,7 @@ class SparseMap(PointWiseMap):
         super().__init__(tensor_names=["map"])
 
         self.map = map
-    
+
     @property
     def shape(self):
         return self.map.shape
@@ -83,7 +83,7 @@ class SparseMap(PointWiseMap):
     @property
     def mT(self):
         return SparseMap(self.map.transpose(-1, -2))
-    
+
     def pull_back(self, f):
         return self.map @ f
 
@@ -108,8 +108,8 @@ class P2PMap(PointWiseMap):
         self.n2 = self.p2p_21.shape[-1]
         self.n1 = n1
 
-        self.max_ind = self.p2p.max().item() if n1 is None else n1-1
-    
+        self.max_ind = self.p2p_21.max().item() if n1 is None else n1-1
+
     @property
     def shape(self):
         return self.p2p_21.shape
@@ -132,13 +132,13 @@ class P2PMap(PointWiseMap):
             raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-1]}')
         elif (f.ndim > 1 and f.shape[-2] <= self.max_ind):
             raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-2]}')
-        
+
         if f.ndim == 3 and self.p2p_21.ndim == 2:
             assert f.shape[0] == self.p2p_21.shape[0], "Batch size of f and p2p_21 should match"
-        
+
         if f.ndim == 1 or f.ndim == 2:  # (N1,) or (N1, p)
             f_pb = f[self.p2p_21]  # (n2, p) or (B, n2, p)
-            
+
         elif f.ndim == 3:
             if self.p2p_21.ndim == 1:
                 f_pb = f[:, self.p2p_21]  # (B, n2, k)
@@ -147,7 +147,7 @@ class P2PMap(PointWiseMap):
                 f_pb = th.take_along_dim(f, self.p2p_21.unsqueeze(-1), dim=1)  # (B, n2, k)
         else:
             raise ValueError('Function is only dim 1, 2 or 3')
-    
+
         return f_pb
 
     def get_nn(self):
@@ -157,7 +157,7 @@ class P2PMap(PointWiseMap):
     def mT(self):
         sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2, device=self.p2p_21.device), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
         return SparseMap(sparsemat).mT
-    
+
     def _to_np_sparse(self):
         assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
 
@@ -183,7 +183,7 @@ class PreciseMap(PointWiseMap):
         super().__init__(tensor_names=["v2face_21", "bary_coords", "faces1"])
         if v2face_21.ndim == 2:
             raise ValueError('Batched version not implemented yet.')
-        
+
         self.v2face_21 = v2face_21  # (n2,) or (B, n2)
         self.bary_coords = bary_coords  # (N2, 3)  or (B, N2, 3)
         self.faces1 = faces1  # (N1, 3)
@@ -192,11 +192,11 @@ class PreciseMap(PointWiseMap):
         self.n1 = self.faces1.max()+1
 
         self._nn_map = None
-    
+
     @property
     def shape(self):
         return th.Size([self.n2, self.n1])
-     
+
     def pull_back(self, f):
         """
         Pull back f using the map T.
@@ -221,10 +221,10 @@ class PreciseMap(PointWiseMap):
             elif f.ndim == 3:
                 f_selected = f[: self.faces1[self.v2face_21]]  # (B, N2, 3, p)
                 f_pb = (self.bary_coords.unsqueeze(0).unsqueeze(-1) * f_selected).sum(1)
-        
+
         else:
             raise NotImplementedError('Batched version not implemented yet.')
-    
+
         return f_pb
 
     def get_nn(self):
@@ -233,7 +233,7 @@ class PreciseMap(PointWiseMap):
                                              self.bary_coords.argmax(1, keepdims=True),
                                              1).squeeze(-1)
             self._add_tensor_name(["_nn_map"])
-        
+
         return self._nn_map
 
     @property
@@ -258,7 +258,7 @@ class EmbP2PMap(P2PMap):
         self.emb2 = emb2.contiguous()  # (N2, K) or (B, N2, K)
 
         p2p_21 = nn_query(self.emb1, self.emb2)
-        
+
         super().__init__(p2p_21, n1=self.emb1.shape[-2])
         self._add_tensor_name(["emb1", "emb2", "p2p_21"])
 
@@ -270,7 +270,7 @@ class EmbPreciseMap(PreciseMap):
         self.emb1 = emb1.contiguous()  # (N1, K)
         self.emb2 = emb2.contiguous()  # (N2, K)
 
-        
+
         v2face_21, bary_coords = nn_query_precise_torch(self.emb1, faces1, self.emb2, return_dist=False, batch_size=min(2000, emb2.shape[0]), clear_cache=clear_cache)
 
         # th.cuda.empty_cache()
@@ -295,9 +295,9 @@ class KernelDenseDistMap(PointWiseMap):
     def _to_dense(self):
         if self.lse_row is None:
             self.lse_row = th.logsumexp(self.log_matrix, dim=-1)  # (..., N2)
-        
+
         return th.exp(self.log_matrix - self.lse_row.unsqueeze(-1))
-    
+
     def pull_back(self, f):
         if type(f) is KernelDenseDistMap:
             return self._to_dense() @ f._to_dense()
@@ -377,7 +377,7 @@ class KernelDistMap(PointWiseMap):
     """
     def __init__(self, emb1, emb2, normalize=False, blur=None, normalize_emb=False, dist_type="sqdist"):
         """
-        
+
         Parameters
         -------------------
         emb1 : (N1, K)
@@ -391,7 +391,7 @@ class KernelDistMap(PointWiseMap):
         assert dist_type in ["sqdist", "inner"], "Invalid distance type."
         self.dist_type = dist_type
 
-        
+
         self.emb1 = emb1.contiguous()  # (N1, K)  or (B, N1, K)
         self.emb2 = emb2.contiguous()  # (N2, K)  or (B, N2, K)
         if normalize_emb:
@@ -417,7 +417,7 @@ class KernelDistMap(PointWiseMap):
     @property
     def shape(self):
         return th.Size([self.n2, self.n1])
-    
+
     def get_maxsqnorm(self):
         formula = pykeops.torch.Genred('SqDist(X,Y)',
                     [f'X = Vi({self.emb1.shape[-1]})',          # First arg  is a parameter,    of dim 1
@@ -429,7 +429,7 @@ class KernelDistMap(PointWiseMap):
         max_dist = formula(self.emb1, self.emb2).max().squeeze()
 
         return max_dist
-    
+
     def get_pull_back_formula(self, dim):
         """
         B, N1, 1 -> B, N2, 1
@@ -459,7 +459,7 @@ class KernelDistMap(PointWiseMap):
         -------------------
         pull_back : (N2, p)  or (B, N2, p)
         """
-        
+
         n_func = f.shape[-1] if f.ndim > 1 else 1
         pull_back_formula = self.get_pull_back_formula(n_func)
 
@@ -470,13 +470,13 @@ class KernelDistMap(PointWiseMap):
             if self.emb1.ndim == 3:
                 f_in = f_in.unsqueeze(0)  # (1, N1, 1)
             f_pb = pull_back_formula(f_in, self.emb1, self.emb2, sqblur).squeeze(-1)  # (N2, )
-        
+
         elif f.ndim == 2:
             f_input = f.contiguous()  # (N1, p)
             if self.emb1.ndim == 3:
                 f_input = f_input.unsqueeze(0)  # (1, N1, p)
             f_pb = pull_back_formula(f_input, self.emb1, self.emb2, sqblur) # (N2, p)
-        
+
         elif f.ndim == 3:
             f_input = f.contiguous()
             if self.emb1.ndim == 2:
@@ -485,16 +485,16 @@ class KernelDistMap(PointWiseMap):
                 f_pb = pull_back_formula(f_input, self.emb1, self.emb2, sqblur)
         else:
             raise ValueError('Function is only dim 1, 2 or 3')
-        
+
         return f_pb
 
     def get_nn(self):
         if self._nn_map is None:
             self._nn_map = nn_query(self.emb1, self.emb2)
             self._add_tensor_name(["_nn_map"])
-        
+
         return self._nn_map
-    
+
     @property
     def mT(self):
         invmap = KernelDistMap(self.emb2, self.emb1, blur=self.blur, normalize=False, dist_type=self.dist_type)
