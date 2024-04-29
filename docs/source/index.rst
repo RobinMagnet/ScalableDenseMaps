@@ -9,4 +9,5 @@ Welcome to densemaps's documentation!
 API
 ---
 .. toctree::
+
    api
