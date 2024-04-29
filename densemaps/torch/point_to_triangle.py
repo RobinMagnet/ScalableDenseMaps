@@ -1,3 +1,9 @@
+"""
+.. note::
+    Torch and cuda-compatible implementation of:
+        [1] - "Deblurring and Denoising of Maps between Shapes", by Danielle Ezuz and Mirela Ben-Chen.
+"""
+
 import time
 
 import numpy as np
@@ -8,10 +14,35 @@ import torch as th
 import torch.nn as nn
 
 from .nn_utils import nn_query
-    
+
 
 
 def nn_query_precise_torch(vert_emb, faces, points_emb, return_dist=False, batch_size=None, clear_cache=True):
+    """
+    Project a pointcloud on a p-dimensional triangle mesh
+
+    Parameters
+    ----------------------------
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb    :
+        (n2, p) coordinates of the pointcloud
+    return_dist   : bool
+        Whether to return the distance to the nearest vertex
+    batch_size    : int, optional
+        If precompute_dmin is False, projects batches of points on the surface
+    clear_cache   : bool
+        Whether to clear cache after computation
+
+    Returns
+    ----------------------------
+    face_match  : torch.Tensor
+        (n2,) - indices of the face assigned to each point.
+    bary_coord  : torch.Tensor
+        (n2,3) - barycentric coordinates of each point within the face.
+    """
 
     with th.no_grad():
         # n2,  (n2,3)
@@ -22,7 +53,7 @@ def nn_query_precise_torch(vert_emb, faces, points_emb, return_dist=False, batch
 
         if vert_emb.is_cuda and clear_cache:
             th.cuda.empty_cache()
-    
+
     if return_dist:
         targets = (bary_coords.unsqueeze(-1) * vert_emb[faces[face_match]]).sum(1)  # (n2, p)
         dists = th.linalg.norm(targets - points_emb,dim=-1)
@@ -30,7 +61,7 @@ def nn_query_precise_torch(vert_emb, faces, points_emb, return_dist=False, batch
         return face_match, bary_coords, dists
 
     return face_match, bary_coords
-        
+
 
 def project_pc_to_triangles(vert_emb, faces, points_emb, precompute_dmin=True, batch_size=None, verbose=False):
     """
@@ -39,18 +70,24 @@ def project_pc_to_triangles(vert_emb, faces, points_emb, precompute_dmin=True, b
 
     Parameters
     ----------------------------
-    vert_emb        : (n1, p) coordinates of the mesh vertices
-    faces           : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb      : (n2, p) coordinates of the pointcloud
-    precompute_dmin : Whether to precompute all the values of delta_min.
-                      Faster but heavier in memory.
-    batch_size      : If precompute_dmin is False, projects batches of points on the surface
-    n_jobs          : number of parallel process for nearest neighbor precomputation
+    vert_emb        : torch.Tensor
+        (n1, p) coordinates of the mesh vertices
+    faces           : torch.Tensor
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb      : torch.Tensor
+        (n2, p) coordinates of the pointcloud
+    precompute_dmin : bool
+        Whether to precompute all the values of delta_min. Faster but heavier in memory.
+    batch_size      : int, optional
+        If precompute_dmin is False, projects batches of points on the surface
 
 
-    Output
+    Returns
     ----------------------------
-    precise_map : (n2,n1) - precise point to point map.
+    face_match  : torch.Tensor
+        (n2,) - indices of the face assigned to each point.
+    bary_coord  : torch.Tensor
+        (n2,3) - barycentric coordinates of each point within the face.
     """
     assert vert_emb.ndim==2
     assert points_emb.ndim==2
@@ -104,12 +141,12 @@ def project_pc_to_triangles(vert_emb, faces, points_emb, precompute_dmin=True, b
 
         for batchind in iterable:
             batch_minmax = [batch_size*batchind, min(n_points, batch_size*(1+batchind))]
-            
+
             # Compute quentities for face simplification
             dmin_batch = compute_per_triangle_min_dist(vert_emb, faces, points_emb[batch_minmax[0]:batch_minmax[1]],
                                                        vert_sqnorm=vert_sqnorms,
                                                        points_sqnorm=points_sqnorm[batch_minmax[0]:batch_minmax[1]])
-            
+
             Deltamin_batch = nn_query(vert_emb, points_emb[batch_minmax[0]:batch_minmax[1]].contiguous())
 
             # Get faceinds and barycentric coordinates
@@ -130,12 +167,15 @@ def compute_per_tri_max_edge_length(vert_emb, faces):
 
     Parameters
     ----------------------------
-    vert_emb      : (n1, p) coordinates of the mesh vertices
-    faces         : (m1, 3) faces of the mesh defined as indices of vertices
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
 
-    Output
+    Returns
     ----------------------------
-    lmax : (m1,) maximum edge length
+    lmax : torch.Tensor
+        (m1,) maximum edge length
     """
     # print("VEMB", vert_emb.max())
 
@@ -152,13 +192,17 @@ def mycdist(X, Y, sqnormX=None, sqnormY=None, squared=False):
 
     Parameters
     --------------
-    X       : (n1, k) first collection
-    Y       : (n2, k) second collection or (k,) if single point
-    squared : bool - whether to compute the squared euclidean distance
+    X       :
+        (n1, k) first collection
+    Y       :
+        (n2, k) second collection or (k,) if single point
+    squared : bool
+        whether to compute the squared euclidean distance
 
-    Output
+    Returns
     --------------
-    distmat : (n1, n2) or (n2,) distance matrix
+    distmat : torch.Tensor
+        (n1, n2) or (n2,) distance matrix
     """
 
     if sqnormX is None:
@@ -190,24 +234,32 @@ def mycdist(X, Y, sqnormX=None, sqnormY=None, squared=False):
 
 def compute_per_triangle_min_dist(vert_emb, faces, points_emb, vert_sqnorm=None, points_sqnorm=None):
     """
-    For each vertex in the pointcloud and each face on the surface, gives the minimum distance
+    Given a vertex in the pointcloud and each face on the surface, gives the minimum distance
     to between the vertex and each of the 3 points of the triangle.
 
     For a given face on the source shape and vertex on the target shape:
-        delta_min = min_{i=1..3} ||A_{c_i,*} - b||_2
+    $\delta_min = \min_{i=1\cdots 3} \|A_{c_i,*} - b\|_2$
     with notations from "Deblurring and Denoising of Maps between Shapes".
 
     Parameters
     ----------------------------
-    vert_emb      : (n1, p) coordinates of the mesh vertices
-    faces         : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb    : (n2, p) coordinates of the pointcloud
-    vert_sqnorm   : (n1,) squared norm of each vertex
-    points_sqnorm : (n2,) squared norm of each point
-    Output
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb    :
+        (n2, p) coordinates of the pointcloud
+    vertind       :
+        index of the vertex for which to compute dmin
+    vert_sqnorm   :
+        (n1,) squared norm of each vertex
+    points_sqnorm :
+        (n2,) squared norm of each point
 
+    Returns
     ----------------------------
-    delta_min : (m1,n2) delta_min for each face on the source shape.
+    delta_min : torch.Tensor
+        (m1,n2) delta_min for each face on the source shape.
     """
     emb0 = vert_emb[faces[:, 0]]  # (m1,k1)
     emb1 = vert_emb[faces[:, 1]]  # (m1,k1)
@@ -231,22 +283,32 @@ def project_to_mesh_multi(vert_emb, faces, points_emb, vertinds, lmax, Deltamin,
 
     Parameters
     ----------------------------
-    vert_emb    : (n1, p) coordinates of the mesh vertices
-    faces       : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb  : (n2, p) coordinates of the pointcloud
-    vertinds     : (l,) - indices of the vertices to project
-    lmax        : (m1,) value of lmax (max edge length for each face)
-    Deltamin    : (n2,) or (l,) value of Deltamin (distance to nearest vertex)
-    dmin        : (m1,n2) or (m1, l) - optional - values of dmin (distance to the nearest vertex of each face
+    vert_emb    :
+        (n1, p) coordinates of the mesh vertices
+    faces       :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb  :
+        (n2, p) coordinates of the pointcloud
+    vertinds     :
+        (l,) - indices of the vertices to project
+    lmax        :
+        (m1,) value of lmax (max edge length for each face)
+    Deltamin    :
+        (n2,) or (l,) value of Deltamin (distance to nearest vertex)
+    dmin        :
+        (m1,n2) or (m1, l) - optional - values of dmin (distance to the nearest vertex of each face
                   for each vertex). Can be computed on the fly
-    dmin_params : dict - optional - if dmin is None, stores 'vert_sqnorm' a (n1,) array of squared norms
-                  of vertices embeddings, and 'points_sqnorm' a (n2,) array of squared norms
-                  of points embeddings. Helps speed up computation of dmin
+    dmin_params : dict, optional
+        if dmin is None, stores 'vert_sqnorm' a (n1,) array of squared norms
+        of vertices embeddings, and 'points_sqnorm' a (n2,) array of squared norms
+        of points embeddings. Helps speed up computation of dmin
 
-    Output
+    Returns
     -----------------------------
-    min_faceind : int - index of the face on which the vertex is projected
-    min_bary    : (3,) - barycentric coordinates on the chosen face
+    min_faceind :
+        (l,) index of the face on which the vertex is projected
+    min_bary    :
+        (l, 3,) - barycentric coordinates on the chosen face
     """
     dmin_params = dict() if dmin_params is None else dmin_params
 
@@ -266,7 +328,7 @@ def project_to_mesh_multi(vert_emb, faces, points_emb, vertinds, lmax, Deltamin,
     # (l,), (l,k1), (l,3), (l,)
     # dists, proj, bary_coords, argmin_triangle = PointsTriangleProjLayer().forward(triangles=query_triangles, points=query_points, return_bary=True, min_only=True)
     bary_coords, argmin_triangle = PointsTriangleProjLayer().forward(triangles=query_triangles, points=query_points, return_dist=False, return_proj=False, return_bary=True, min_only=True)
-    
+
 
     min_faceind = query_faceinds[argmin_triangle] # .clone().detach()
     min_bary = bary_coords
@@ -276,6 +338,14 @@ def project_to_mesh_multi(vert_emb, faces, points_emb, vertinds, lmax, Deltamin,
 
 
 class PointsTriangleProjLayer(nn.Module):
+    """
+    Torch implementation of the projection of points a set of triangles in p-dimension.
+    Face pre-selection must be done beforehand, this is bruteforce.
+
+    .. note::
+        The notations (and the algorithm) are inspired from:
+            [1] "David Eberly, 'Distance Between Point and Triangle in 3D', Geometric Tools, LLC, (1999)"
+    """
     def __init__(self):
         # pass
         super().__init__()
@@ -390,10 +460,10 @@ class PointsTriangleProjLayer(nn.Module):
 
         region_5_1 =  (d >= 0)
         region_5_2 = ~region_5_1
-        
+
         region_5_21 = region_5_2 & (-d >= a)
         region_5_22 = region_5_2 & ~region_5_21
-        
+
         # Region 5
         # final_t[region_5] = 0
         # Region 5.1
@@ -438,7 +508,7 @@ class PointsTriangleProjLayer(nn.Module):
 
         region_2_1 = (c_plus_e > b_plus_d)
         region_2_2 = ~region_2_1
-        
+
         region_2_11 = region_2_1 & (numer >= denom)
         region_2_12 = region_2_1 & ~region_2_11
 
@@ -557,29 +627,41 @@ class PointsTriangleProjLayer(nn.Module):
 
     def forward(self, triangles=None, points=None, min_only=True, return_bary=True, return_dist=True, return_proj=True, verbose=False):
         """
-        Parameters
-        ----------------------------
-        triangles : (m, 3, p) coordinates of the mesh triangles
-        points    : (n, p) coordinates of the points to project
-        min_only  : bool - whether to return results only for closest point on the triangle
-        return_bary : bool - whether to return the barycentric coordinates
-        return_dist : bool - whether to return the distances
-        return_proj : bool - whether to return the projections
-        verbose   : bool - whether to print debug information
 
-        Output
-        ----------------------------
-        In order [final_dists, projections, barycentric_coordinates, argmin_proj]
-        
-        final_dists : (n,) or (n,m) distances between the points and the triangles. (n,) if min_only is True
-        projections : (n,p) or (n,m,p) projections of the points on the triangles. (n,p) if min_only is True
-        barycentric_coordinates : (n,3) or (n,m,3) barycentric coordinates of the projections. (n,3) if min_only is True
-        argmin_proj : (n,) index of the closest triangle. Only if min_only is True
+        returns in order: [final_dists, projections, barycentric_coordinates, argmin_proj]
 
         - If return_dist is True, output contains the distances
         - If return_proj is True, output contains the projections
         - If return_bary is True, output contains the barycentric coordinates
         - If min_only is True, output contains the index of the closest triangle
+
+        Parameters
+        ----------------------------
+        triangles :
+            (m, 3, p) coordinates of the mesh triangles
+        points    :
+            (n, p) coordinates of the points to project
+        min_only  : bool
+             whether to return results only for closest point on the triangle
+        return_bary : bool
+            whether to return the barycentric coordinates
+        return_dist : bool
+            whether to return the distances
+        return_proj : bool
+            whether to return the projections
+        verbose   : bool
+            whether to print debug information
+
+        Returns
+        ----------------------------
+        final_dists :
+            (n,) or (n,m) distances between the points and the triangles. (n,) if min_only is True
+        projections :
+            (n,p) or (n,m,p) projections of the points on the triangles. (n,p) if min_only is True
+        barycentric_coordinates :
+            (n,3) or (n,m,3) barycentric coordinates of the projections. (n,3) if min_only is True
+        argmin_proj :
+            (n,) index of the closest triangle. Only if min_only is True
         """
 
 
@@ -598,7 +680,7 @@ class PointsTriangleProjLayer(nn.Module):
 
         diff = bases[None,:] - points[:, None, :]  # (n,m,p)
 
-        #  Precompute quantities 
+        #  Precompute quantities
 
         a = th.einsum('ij,ij->i', axis1, axis1).unsqueeze(0).expand(points.shape[0], -1)  # (n, m)
         b = th.einsum('ij,ij->i', axis1, axis2).unsqueeze(0).expand(points.shape[0], -1)  # (n, m)
@@ -635,11 +717,11 @@ class PointsTriangleProjLayer(nn.Module):
             final_dists = th.sqrt(final_dists)  # (n,) or # (n,m)
 
             output.append(final_dists)
-            
-        if min_only and (return_proj or return_bary):     
+
+        if min_only and (return_proj or return_bary):
             final_s = th.gather(final_s, -1, argmin_proj).squeeze(dim=-1)  # (n,)
             final_t = th.gather(final_t, -1, argmin_proj).squeeze(dim=-1)  # (n,)
-        
+
         if min_only:
             argmin_proj = argmin_proj.squeeze(-1)
 
@@ -650,7 +732,7 @@ class PointsTriangleProjLayer(nn.Module):
                 projections = bases[None,...] + final_s[...,None] * axis1[None,...] + final_t[...,None] * axis2[None,...]  # (n,m,p)
 
             output.append(projections)
-        
+
         if return_bary:
             if min_only:
                 bary_coords = th.cat([

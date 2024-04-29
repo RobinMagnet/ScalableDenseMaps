@@ -22,6 +22,26 @@ from .nn_utils import nn_query, compute_sqdistmat
 from ..numpy.point_to_triangle import barycentric_to_precise
 
 class PointWiseMap:
+    r"""
+    Root class representing a pointwise map. Not supposed to be instanciated in itself.
+
+    A pointwise, denoted $P : S_2 \to S_1$, is a map that associates to each point x in $S_2$ a point $P(x)$ in $S_1$.
+    It can usually be represented as a $n_2 \times n_1$ matrix, where $n_2$ is the number of points in $S_2$ and $n_1$ the number of points in $S_1$.
+
+    Given a pointwise map $P$, the pullback of a function $f : S_1 \to R$ is a function $f_{pb} : S_2 \to R$ defined by $f_{pb}(x) = f(P(x))$.
+    In practice it can easily be computed by matrix multiplication: $f_{pb} = P f$.
+
+    In practice, we usually don't need to use the exact values inside $P$, btu rather only care about multiplying with some functions,
+    extracting maximal values per-row or per-column, or summing on rows or columns.
+
+    In torch, all maps can be represented in a batched way, with an additional dimension at the beginning of the tensor.
+
+    Attributes
+    -------------------
+    tensor_names : list of str
+        Names of the tensors stored in the object. Used to transfer to GPU.
+
+    """
     def __init__(self, tensor_names=None):
         self.tensor_names = []
         self._add_tensor_name(tensor_names)
@@ -50,57 +70,206 @@ class PointWiseMap:
             setattr(self, name, getattr(self, name).to(device))
         return self
 
+    @property
+    def shape(self):
+        """
+        Shape of the map.
+
+        Returns
+        -------------------
+        shape : tuple
+            Depends on the representation
+        """
+        raise NotImplementedError("Shape not implemented")
+
     def pull_back(self, f):
+        """Pull back a function $f$.
+        Three possibilities:
+        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
+
+        Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
+
+        Parameters
+        -------------------
+        f : torch.Tensor
+            (N1,), (N1, p) or (B, N1, p)
+
+        Returns
+        -------------------
+        f_pb : torch.Tensor
+            (N2,), (N2, p) or (B, N2, p)
+        """
         raise NotImplementedError
 
     def get_nn(self):
+        """Ouptputs the nearest neighbor map.
+        The nearest neighbor map is the map that associates to each point of S2 the index of the closest point in S1.
+
+        Returns
+        -------------------
+        nn_map : torch.Tensor
+            (N2,) or (B, N2) depending on the representation
+        """
         raise NotImplementedError
 
+    def _sparse_matmul(self, x, y):
+        """Matrix multiplication of two (potentially batched) sparse matrices.
+        """
+        if x.ndim > 3:
+                raise NotImplementedError("Multi Batched multiplication not implemented yet.")
+        elif x.ndim == 3:
+            if y.ndim == 3:
+                return th.stack([x[i] @ y[i] for i in range(x.shape[0])])
+            else:
+                return th.stack([x[i] @ y for i in range(x.shape[0])])
+        elif y.ndim == 3:
+            return th.stack([x @ y[i] for i in range(y.shape[0])])
+
     def __matmul__(self, other):
+        """Matrix multiplication of two maps.
+        """
+        if issubclass(type(other), PointWiseMap):
+            other_sparse = other._to_sparse()
+            self_sparse = self._to_sparse()
+
+            if other_sparse.layout is th.sparse_coo and self_sparse.layout is th.sparse_coo:
+                prod = self._sparse_matmul(self_sparse, other_sparse)
+                return SparseMap(prod)
+            elif self_sparse.layout is th.strided and other_sparse.layout is th.strided:
+                prod = self_sparse @ other_sparse
+                return SparseMap(prod)
+            elif other_sparse.layout is th.sparse_coo:
+                if other_sparse.ndim == 3:
+                    prod = th.stack([self_sparse @ other_sparse[i] for i in range(other_sparse.shape[0])])
+                else:
+                    prod = self_sparse @ other_sparse
+            elif self_sparse.layout is th.sparse_coo:
+                if self_sparse.ndim == 3:
+                    prod = th.stack([self_sparse[i] @ other_sparse for i in range(self_sparse.shape[0])])
+                else:
+                    prod = self_sparse @ other_sparse
+            else:
+                raise ValueError("Not implemented yet.")
+
+            return SparseMap(prod)
+
+
         return self.pull_back(other)
 
     @property
     def mT(self):
+        """Returns the transpose of the map.
+
+        Returns the transpose of the matrix representation of the map.
+
+        Returns
+        -------------------
+        map_t : PointWiseMap
+            Transpose map
+        """
+        raise NotImplementedError
+
+    def _to_sparse(self):
+        """Returns sparse (or dense) tensor representation of the map.
+
+        Returns
+        -------------------
+        map_sparse : torch.sparse_coo_tensor or torch.Tensor
+            Sparse or dense representation of the map
+        """
         raise NotImplementedError
 
 class SparseMap(PointWiseMap):
-    def __init__(self, map):
-        """
-        Map represented by a sparse matrix
+    """Map represented by a sparse matrix.
 
-        Parameters
-        -------------------
-        map : (N2, N1) or (B, N2, N1)
-        """
+    The sparse matrix is of size `(N2, N1)`.
+
+    Can actually represent a densemap too, but it's not recommended.
+
+    Parameters
+    -------------------
+    map : scipy.sparse.csr_matrix
+        (N2, N1) or (B, N2, N1)
+    """
+    def __init__(self, map):
+
         super().__init__(tensor_names=["map"])
 
         self.map = map
 
     @property
     def shape(self):
+        """
+        Shape of the map.
+
+        Returns
+        -------------------
+        shape : tuple
+            returns (N2, N1) or (B, N2, N1)
+        """
         return self.map.shape
 
     @property
     def mT(self):
+        """Returns the transpose of the map.
+
+        Returns the transpose of the matrix representation of the map.
+
+        Returns
+        -------------------
+        map_t : SparseMap
+            Transpose map
+        """
         return SparseMap(self.map.transpose(-1, -2))
 
     def pull_back(self, f):
-        return self.map @ f
+        """Pull back a function $f$.
+        Three possibilities:
+        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
-class P2PMap(PointWiseMap):
-    """
-    Point to point map, as an array or tensor of shape (n2,)
-    """
-    def __init__(self, p2p_21, n1=None):
-        """
-        Point to point map from a set S2 to a set S1.
+        Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
         Parameters
         -------------------
-        p2p_21 : (n2,) or (B, n2)
-        n1 : int or None
-            Number of points in S1. If None, n1 = p2p.max()+1
+        f : torch.Tensor
+            (N1,), (N1, p) or (B, N1, p)
+
+        Returns
+        -------------------
+        f_pb : torch.Tensor
+            (N2,), (N2, p) or (B, N2, p)
         """
+        if map.ndim == 3:
+            if f.ndim < 3:
+                f_pb = th.stack([self.map[i] @ f for i in range(self.map.shape[0])])
+            else:
+                assert f.shape[0] == self.map.shape[0], "Batch size of f and map should match"
+                f_pb = th.stack([self.map[i] @ f[i] for i in range(f.shape[0])])
+        else:
+            f_pb = self.map @ f
+        return f_pb
+
+    def _to_sparse(self):
+        return self.map
+
+class P2PMap(PointWiseMap):
+    r"""
+    Point to point map from a set S2 to a set S1.
+    Defined by a map $P_{21} : S2 \to S1$ or a tensor `p2p_21` of size `(n_2)`, where `p2p_21[i]` is the index of the point in S1 closest to the point i in S2.
+    Batched versions are accepted
+
+    Parameters
+    -------------------
+    p2p_21 : th.Tensor
+        (n2,) or (B, n2)
+    n1 : int or None
+        Number of points in S1. If None, n1 = p2p.max()+1
+    """
+    def __init__(self, p2p_21, n1=None):
         super().__init__(tensor_names=["p2p_21"])
 
         self.p2p_21 = p2p_21  # (n2, ) or (B, n2)
@@ -112,26 +281,49 @@ class P2PMap(PointWiseMap):
 
     @property
     def n1(self):
+        """
+        Number of vertices on the first shape.
+        Estimated if not provided as input.
+
+        Returns
+        -------------------
+        n1 : int
+        """
         return self._n1 if self._n1 is not None else self.max_ind+1
 
     @property
     def shape(self):
+        """
+        Shape of the map.
+
+        Returns
+        -------------------
+        shape : tuple
+         return (n2,) or (B, n2)
+        """
         return self.p2p_21.shape
 
     def pull_back(self, f):
-        """
-        Pull back f using the map T.
+        """Pull back a function $f$.
+        Four possibilities:
+        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,) (or (B, N2,) if the map is batched)
+        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p) (or (B, N2, p) if the map is batched)
+        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
-        Parameters:
-        ------------------
-        f : (N1,), (N1, p) or (B, N, p)
+        Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
-        Output
+        Parameters
         -------------------
-        pull_back : (N2, p)  or (B, N2, p)
+        f : torch.Tensor
+            (N1,), (N1, p) or (B, N1, p)
+
+        Returns
+        -------------------
+        f_pb : torch.Tensor
+            (N2,), (N2, p) or (B, N2, p)
         """
 
-
+        # Check dimensions consistency
         if (f.ndim==1 and f.shape[-1] <= self.max_ind):
             raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-1]}')
         elif (f.ndim > 1 and f.shape[-2] <= self.max_ind):
@@ -140,6 +332,7 @@ class P2PMap(PointWiseMap):
         if f.ndim == 3 and self.p2p_21.ndim == 2:
             assert f.shape[0] == self.p2p_21.shape[0], "Batch size of f and p2p_21 should match"
 
+        # Compute pull back on different shape scenarios
         if f.ndim == 1 or f.ndim == 2:  # (N1,) or (N1, p)
             f_pb = f[self.p2p_21]  # (n2, p) or (B, n2, p)
 
@@ -155,12 +348,33 @@ class P2PMap(PointWiseMap):
         return f_pb
 
     def get_nn(self):
+        """Ouptputs the nearest neighbor map.
+        The nearest neighbor map is the same as the input.
+
+        Returns
+        -------------------
+        nn_map : torch.Tensor
+            (N2,) or (B, N2) depending on the representation
+        """
         return self.p2p_21
 
     @property
     def mT(self):
-        sparsemat = th.sparse_coo_tensor(th.stack([th.arange(self.n2, device=self.p2p_21.device), self.p2p_21]), th.ones_like(self.p2p_21).float(), (self.n2, self.n1)).coalesce()
-        return SparseMap(sparsemat).mT
+        if self.p2p_21.ndim == 1:
+            map_mt = self._single_p2p_to_sparse(self.p2p_21).mT
+        else:
+            map_mt = th.stack([self._single_p2p_to_sparse(self.p2p_21[i]).T for i in range(self.p2p_21.shape[0])])
+        return SparseMap(map_mt)
+
+    def _single_p2p_to_sparse(self, p2p):
+        assert p2p.ndim == 1, "Only for non-batched version"
+        return th.sparse_coo_tensor(th.stack([th.arange(self.n2, device=p2p.device), p2p]), th.ones_like(p2p).float(), (self.n2, self.n1)).coalesce()
+
+    def _to_sparse(self):
+        if self.p2p_21.ndim == 1:
+            return self._single_p2p_to_sparse(self.p2p_21)
+        else:
+            return th.stack([self._single_p2p_to_sparse(self.p2p_21[i]) for i in range(self.p2p_21.shape[0])])
 
     def _to_np_sparse(self):
         assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
@@ -169,20 +383,27 @@ class P2PMap(PointWiseMap):
 
 class PreciseMap(PointWiseMap):
     """
-    Point to barycentric map, using vertex to face and barycentric coordinates.
+    Point to barycentric map from a set S2 to a surface S1.
+    Batched Version is not supported yet.
+
+    Is represented as a sparse matrix of size `(N2, N1)`, where there are at most 3 non-zero entries per row, which sum to 1.
+
+    .. note::
+        Batched version is not supported yet.
+
+    Parameters
+    -------------------
+    v2face_21 : torch.Tensor
+        (n2,) Indices of the faces of S1 closest to each point of S2.
+    bary_coords : torch.Tensor
+        (n2, 3) Barycentric coordinates of the points of S2 in the faces of S1.
+    faces1 :  torch.Tensor
+        (N1, 3) All the Faces of S1.
     """
     def __init__(self, v2face_21, bary_coords, faces1):
         """
         Point to barycentric map from a set S2 to a surface S1.
 
-        Parameters
-        -------------------
-        v2face_21 : (n2,) or (B, n2)
-            Indices of the faces of S1 closest to each point of S2.
-        bary_coords : (n2, 3) or (B, n2, 3)
-            Barycentric coordinates of the points of S2 in the faces of S1.
-        faces1 : (N1, 3)
-            All the Faces of S1.
         """
         super().__init__(tensor_names=["v2face_21", "bary_coords", "faces1"])
         if v2face_21.ndim == 2:
@@ -209,7 +430,7 @@ class PreciseMap(PointWiseMap):
         ------------------
         f : (N1,), (N1, p) or (B, N, p)
 
-        Output
+        Returns
         -------------------
         pull_back : (N2, p)  or (B, N2, p)
         """
@@ -256,6 +477,17 @@ class PreciseMap(PointWiseMap):
 class EmbP2PMap(P2PMap):
     """
     Point to point map, computed from embeddings.
+
+    Simple wrapper around P2PMap
+
+    Parameters
+    -------------------
+    emb1 : torch.Tensor
+        (N1, p) or (B, N1, p)
+    emb2 : torch.Tensor
+        (N2, p) or (B, N2, p)
+    n_jobs : int
+        Number of jobs to use for the NN query
     """
     def __init__(self, emb1, emb2):
         self.emb1 = emb1.contiguous()  # (N1, K) or (B, N1, K)
@@ -264,11 +496,27 @@ class EmbP2PMap(P2PMap):
         p2p_21 = nn_query(self.emb1, self.emb2)
 
         super().__init__(p2p_21, n1=self.emb1.shape[-2])
-        self._add_tensor_name(["emb1", "emb2", "p2p_21"])
+        self._add_tensor_name(["emb1", "emb2"])
 
 class EmbPreciseMap(PreciseMap):
     """
     Point to barycentric map, computed from embeddings.
+
+    Simple wrapper around PreciseMap
+
+    .. note::
+        Batched version is not supported yet.
+
+    Parameters
+    -------------------
+    emb1 : torch.Tensor
+        (N1, K)
+    emb2 : torch.Tensor
+        (N2, K)
+    faces1 : torch.Tensor
+        (N1, 3)
+    clear_cache : bool
+        The projection somehow leaves lot of cache on the GPU, which should be cleared manually (slower than the projection itself...)
     """
     def __init__(self, emb1, emb2, faces1, clear_cache=True):
         self.emb1 = emb1.contiguous()  # (N1, K)
@@ -282,6 +530,22 @@ class EmbPreciseMap(PreciseMap):
         self._add_tensor_name(["emb1", "emb2"])
 
 class KernelDenseDistMap(PointWiseMap):
+    r"""Map represented by a row-normalized dense matrix obtained from an element-wise exponential.
+
+    The matrix is of size `(N2, N1)`, and has values
+    $P_{ij} = \frac{1}{\sum_j D_{ij} \exp(D_{ij})$ where $D$ is some matrix
+
+    Only D has to be provided
+
+    Parameters
+    -------------------
+    log_matrix : torch.Tensor
+        (N2, N1) or (B, N2, N1), the matrix D
+    lse_row : torch.Tensor, optional
+        (N2,) or (B, N2). The logsumexp on rows
+    lse_col : torch.Tensor
+        (N1,) or (B, N1). The logsumexp on columns
+    """
     def __init__(self, log_matrix, lse_row=None, lse_col=None):
         super().__init__(tensor_names=["log_matrix"])
         self.log_matrix = log_matrix   # (..., N2, N1)
@@ -296,19 +560,47 @@ class KernelDenseDistMap(PointWiseMap):
         if lse_col is not None:
             self._add_tensor_name(["lse_col"])
 
+    def _to_sparse(self):
+        return self._to_dense()
+
     def _to_dense(self):
         if self.lse_row is None:
             self.lse_row = th.logsumexp(self.log_matrix, dim=-1)  # (..., N2)
+            self._add_tensor_name(["lse_row"])
 
         return th.exp(self.log_matrix - self.lse_row.unsqueeze(-1))
 
     def pull_back(self, f):
-        if type(f) is KernelDenseDistMap:
-            return self._to_dense() @ f._to_dense()
+        """Pull back a function $f$.
+        Four possibilities:
+        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
+        Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
+
+        Parameters
+        -------------------
+        f : torch.Tensor
+            (N1,), (N1, p) or (B, N1, p)
+
+        Returns
+        -------------------
+        f_pb : torch.Tensor
+            (N2,), (N2, p) or (B, N2, p)
+        """
         return self._to_dense() @ f
 
     def get_nn(self):
+        """Outputs the nearest neighbor map.
+        The nearest neighbor map is the map that associates to each point of S2 the index of the closest point in S1.
+        Simple argmax along the last dimension.
+
+        Returns
+        -------------------
+        nn_map : torch.Tensor
+            (N2,) on the representation
+        """
         if self._nn_map is None:
             self._nn_map = self.log_matrix.argmax(-1)
             self._add_tensor_name(["_nn_map"])
@@ -316,6 +608,16 @@ class KernelDenseDistMap(PointWiseMap):
 
     @property
     def mT(self):
+        """
+        Transposes the map.
+
+        Returns another KernelDenseDistMap object with the transposed matrix.
+
+        Returns
+        -------------------
+        map_t : KernelDenseDistMap
+            Transpose map
+        """
         obj = KernelDenseDistMap(self.log_matrix.transpose(-1,-2), lse_row=self.lse_col, lse_col=self.lse_row)
         obj._inv_nn_map, obj._nn_map = self._nn_map, self._inv_nn_map
         if obj._nn_map is not None:
@@ -329,20 +631,31 @@ class KernelDenseDistMap(PointWiseMap):
         return self.log_matrix.shape
 
 class EmbKernelDenseDistMap(KernelDenseDistMap):
-    def __init__(self, emb1, emb2, blur=None, normalize=False, normalize_emb=False, dist_type="sqdist"):
-        """
+    r"""Kernel Map, computed from embeddings.
 
-        Parameters
-        -------------------
-        emb1 : (N1, K)
-        emb2 : (N2, K)
-        blur : float
-            Standard deviation of the Gaussian kernel.
-        normalize : bool
-            Normalize the blur by the maximum distance.
-        dist_type : {"sqdist", "inner"}
-            Type of distance to use.
-        """
+    Simple wrapper around KernelDenseDistMap.
+
+    Kernel has the form $\exp\big(-\frac{s(x,y)}{2\sigma^2}\big)$, where $s(x,y)$ is either:
+    - the negative squared distance between the embeddings of x and y.
+    - the (positive) inner product between the embeddings of x and y (potentially normalized).
+
+    Parameters
+    -------------------
+    emb1 : torch.Tensor
+        (N1, p) or (B, N1, p) embedding on first shape
+    emb2 : torch.Tensor
+        (N2, p) or (B, N2, p) embedding on second shape
+    blur : float
+        Standard deviation of the Gaussian kernel.
+    normalize : bool
+        Normalize the blur by the maximum distance between embedding points
+    normalize_emb : bool
+        Normalize the embeddings.
+    dist_type : string
+        {"sqdist", "inner"} Type of score to use.
+
+    """
+    def __init__(self, emb1, emb2, blur=None, normalize=False, normalize_emb=False, dist_type="sqdist"):
 
         assert dist_type in ["sqdist", "inner"], "Invalid distance type."
 
@@ -376,21 +689,30 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
         self._add_tensor_name(["emb1", "emb2", "blur"])
 
 class KernelDistMap(PointWiseMap):
-    """
-    Map of the the shape exp(- ||X_i - Y_j||_2^2 / blur**2)). Normalized per row.
+    r"""Memory-Scalable Version of EmbKernelDenseDistMap
+
+    Row normalized version fo the kernel map of the form $\exp\big(-\frac{s(x,y)}{2\sigma^2}\big)$, where $s(x,y)$ is either:
+    - the negative squared distance between the embeddings of x and y.
+    - the (positive) inner product between the embeddings of x and y (potentially normalized).
+
+    Parameters
+    -------------------
+    emb1 : torch.Tensor
+        (N1, p) or (B, N1, p) embedding on first shape
+    emb2 : torch.Tensor
+        (N2, p) or (B, N2, p) embedding on second shape
+    blur : float
+        Standard deviation of the Gaussian kernel.
+    normalize : bool
+        Normalize the blur by the maximum distance between embedding points
+    normalize_emb : bool
+        Normalize the embeddings.
+    dist_type : string
+        {"sqdist", "inner"} Type of score to use.
+
     """
     def __init__(self, emb1, emb2, normalize=False, blur=None, normalize_emb=False, dist_type="sqdist"):
-        """
 
-        Parameters
-        -------------------
-        emb1 : (N1, K)
-        emb2 : (N2, K)
-        normalize : bool
-            Normalize the blur by the maximum distance.
-        blur : float
-            Standard deviation of the Gaussian kernel.
-        """
         super().__init__(tensor_names=["emb1", "emb2", "blur"])
         assert dist_type in ["sqdist", "inner"], "Invalid distance type."
         self.dist_type = dist_type
@@ -451,17 +773,32 @@ class KernelDistMap(PointWiseMap):
 
         return dist.sumsoftmaxweight(f, axis=1)  # (B, N2, p)
 
+    def _to_sparse(self):
+        return self._to_dense()
+
+    def _to_dense():
+        densemap = EmbKernelDenseDistMap(self.emb1, self.emb2, blur=self.blur, normalize=False, normalize_emb=False, dist_type=self.dist_type)
+
+        return densemap._to_dense()
+
     def pull_back(self, f):
-        """
-        Pull back f using the map T.
+        """Pull back a function $f$.
+        Four possibilities:
+        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
-        Parameters:
-        ------------------
-        f : (N1,), (N1, p) or (B, N, p)
+        Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
-        Output
+        Parameters
         -------------------
-        pull_back : (N2, p)  or (B, N2, p)
+        f : np.ndarray
+            (N1,), (N1, p) or (B, N1, p)
+
+        Returns
+        -------------------
+        f_pb : np.ndarray
+            (N2,), (N2, p) or (B, N2, p)
         """
 
         n_func = f.shape[-1] if f.ndim > 1 else 1

@@ -1,3 +1,9 @@
+"""
+.. note::
+    Python implementation of:
+        [1] - "Deblurring and Denoising of Maps between Shapes", by Danielle Ezuz and Mirela Ben-Chen.
+"""
+
 import time
 
 import numpy as np
@@ -7,6 +13,33 @@ import scipy.sparse as sparse
 from .nn_utils import knn_query
 
 def nn_query_precise_np(vert_emb, faces, points_emb, return_dist=False, batch_size=None , n_jobs=1):
+    """
+    Project a pointcloud on a p-dimensional mesh.
+
+    Parameters
+    ----------------------------
+    vert_emb    :
+        (n1, p) coordinates of the mesh vertices
+    faces       :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb  :
+        (n2, p) coordinates of the pointcloud
+    return_dist :
+        whether to return the distance to the nearest vertex
+    batch_size  : int, optional
+        if precompute_dmin is False, projects batches of points on the surface
+    n_jobs      : int
+        number of parallel process for nearest neighbor precomputation
+
+    Returns
+    ----------------------------
+    face_match  : np.ndarray
+        (n2,) - indices of the face assigned to each point
+    bary_coord  : np.ndarray
+        (n2,3) - barycentric coordinates of each point within the face
+    dists       : np.ndarray
+        (n2,) - distance to the nearest vertex
+    """
 
         # n2,  (n2,3)
     face_match, bary_coords = project_pc_to_triangles(vert_emb, faces, points_emb,
@@ -15,7 +48,7 @@ def nn_query_precise_np(vert_emb, faces, points_emb, return_dist=False, batch_si
                                                         return_sparse=False,
                                                         n_jobs=n_jobs,
                                                         verbose=False)
-    
+
     if return_dist:
         targets = (bary_coords[...,None] * vert_emb[faces[face_match]]).sum(1)  # (n2, p)
         dists = np.linalg.norm(targets - points_emb,dim=-1)  # (n2,)
@@ -34,18 +67,30 @@ def project_pc_to_triangles(vert_emb, faces, points_emb, precompute_dmin=True, b
 
     Parameters
     ----------------------------
-    vert_emb        : (n1, p) coordinates of the mesh vertices
-    faces           : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb      : (n2, p) coordinates of the pointcloud
-    precompute_dmin : Whether to precompute all the values of delta_min.
-                      Faster but heavier in memory.
-    batch_size      : If precompute_dmin is False, projects batches of points on the surface
-    n_jobs          : number of parallel process for nearest neighbor precomputation
+    vert_emb        : np.ndarray
+        (n1, p) coordinates of the mesh vertices
+    faces           : np.ndarray
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb      : np.ndarray
+        (n2, p) coordinates of the pointcloud
+    precompute_dmin : bool
+        Whether to precompute all the values of delta_min. Faster but heavier in memory.
+    batch_size      : int, optional
+        If precompute_dmin is False, projects batches of points on the surface
+    n_jobs          : int
+        number of parallel process for nearest neighbor precomputation
+    return_sparse   : bool
+        Whether to return a sparse matrix instead of the face_match and barycentric coordinate
 
 
-    Output
+    Returns
     ----------------------------
-    precise_map : (n2,n1) - precise point to point map.
+    precise_map : sparse.csrmatrix, optional
+        (n2,n1) - precise point to point map. ONLY if `return_sparse` is True
+    face_match  : np.ndarray
+        (n2,) - indices of the face assigned to each point. ONLY if `return_sparse` is False
+    bary_coord  : np.ndarray
+        (n2,3) - barycentric coordinates of each point within the face. ONLY if `return_sparse` is False
     """
     if batch_size is not None:
         batch_size = None if batch_size < 2 else batch_size
@@ -119,7 +164,7 @@ def project_pc_to_triangles(vert_emb, faces, points_emb, precompute_dmin=True, b
 
     if return_sparse:
         return barycentric_to_precise(faces, face_match, bary_coord, n_vertices=n_vertices)
-    
+
     return face_match, bary_coord
     # return barycentric_to_precise(faces, face_match, bary_coord, n_vertices=n_vertices)
 
@@ -130,12 +175,15 @@ def compute_lmax(vert_emb, faces):
 
     Parameters
     ----------------------------
-    vert_emb      : (n1, p) coordinates of the mesh vertices
-    faces         : (m1, 3) faces of the mesh defined as indices of vertices
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
 
-    Output
+    Returns
     ----------------------------
-    lmax : (m1,) maximum edge length
+    lmax : np.ndarray
+        (m1,) maximum edge length
     """
 
     emb0 = vert_emb[faces[:,0]]  # (m1,k1)
@@ -158,20 +206,24 @@ def compute_Deltamin(vert_emb, points_emb, n_jobs=1):
 
 
     Compute Delta_min for each vertex in the target shape
-        min_v2 ||A_{v2,*} - b||_2
+    $\min_{v_2} \|A_{v_2,*} - b\|_2$
     with notations from "Deblurring and Denoising of Maps between Shapes".
 
     Corresponds to nearest neighbor seach.
 
     Parameters
     ----------------------------
-    vert_emb   : (n1, p) coordinates of the mesh vertices
-    points_emb : (n2, p) coordinates of the pointcloud
-    n_jobs     : number of paraller processes
+    vert_emb   :
+        (n1, p) coordinates of the mesh vertices
+    points_emb :
+        (n2, p) coordinates of the pointcloud
+    n_jobs     :
+        number of paraller processes
 
-    Output
+    Returns
     ----------------------------
-    Delta_min : (n2,) Delta_min for each vertex on the target shape
+    Delta_min : np.ndarray
+        (n2,) Delta_min for each vertex on the target shape
     """
 
     # tree = KDTree(mesh1.eigenvectors[:,:k1])  # Tree on (n1,k1)
@@ -189,13 +241,17 @@ def mycdist(X, Y, sqnormX=None, sqnormY=None, squared=False):
 
     Parameters
     --------------
-    X       : (n1, k) first collection
-    Y       : (n2, k) second collection or (k,) if single point
-    squared : bool - whether to compute the squared euclidean distance
+    X       :
+        (n1, k) first collection
+    Y       :
+        (n2, k) second collection or (k,) if single point
+    squared : bool
+        whether to compute the squared euclidean distance
 
-    Output
+    Returns
     --------------
-    distmat : (n1, n2) or (n2,) distance matrix
+    distmat : np.ndarray
+        (n1, n2) or (n2,) distance matrix
     """
 
     if sqnormX is None:
@@ -231,21 +287,28 @@ def compute_dmin(vert_emb, faces, points_emb, vertind, vert_sqnorms=None, points
     to between the vertex and each of the 3 points of the triangle.
 
     For a given face on the source shape and vertex on the target shape:
-        delta_min = min_{i=1..3} ||A_{c_i,*} - b||_2
+    $\delta_min = \min_{i=1\cdots 3} \|A_{c_i,*} - b\|_2$
     with notations from "Deblurring and Denoising of Maps between Shapes".
 
     Parameters
     ----------------------------
-    vert_emb      : (n1, p) coordinates of the mesh vertices
-    faces         : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb    : (n2, p) coordinates of the pointcloud
-    vertind       : index of the vertex for which to compute dmin
-    vert_sqnorm   : (n1,) squared norm of each vertex
-    points_sqnorm : (n2,) squared norm of each point
-    Output
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb    :
+        (n2, p) coordinates of the pointcloud
+    vertind       :
+        index of the vertex for which to compute dmin
+    vert_sqnorm   :
+        (n1,) squared norm of each vertex
+    points_sqnorm :
+        (n2,) squared norm of each point
 
+    Returns
     ----------------------------
-    delta_min : (m1,n2) delta_min for each face on the source shape.
+    delta_min : np.ndarray
+        (m1,n2) delta_min for each face on the source shape.
     """
     if vert_sqnorms is None:
         vert_sqnorms = np.linalg.norm(vert_emb, axis=1)**2
@@ -271,20 +334,26 @@ def compute_all_dmin(vert_emb, faces, points_emb, vert_sqnorm=None, points_sqnor
     to between the vertex and each of the 3 points of the triangle.
 
     For a given face on the source shape and vertex on the target shape:
-        delta_min = min_{i=1..3} ||A_{c_i,*} - b||_2
+    $\delta_min = \min_{i=1\cdots 3} \|A_{c_i,*} - b\|_2$
     with notations from "Deblurring and Denoising of Maps between Shapes".
 
     Parameters
     ----------------------------
-    vert_emb      : (n1, p) coordinates of the mesh vertices
-    faces         : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb    : (n2, p) coordinates of the pointcloud
-    vert_sqnorm   : (n1,) squared norm of each vertex
-    points_sqnorm : (n2,) squared norm of each point
-    Output
+    vert_emb      :
+        (n1, p) coordinates of the mesh vertices
+    faces         :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb    :
+        (n2, p) coordinates of the pointcloud
+    vert_sqnorm   :
+        (n1,) squared norm of each vertex
+    points_sqnorm :
+        (n2,) squared norm of each point
 
+    Returns
     ----------------------------
-    delta_min : (m1,n2) delta_min for each face on the source shape.
+    delta_min : np.ndarray
+        (m1,n2) delta_min for each face on the source shape.
     """
     emb0 = vert_emb[faces[:, 0]]  # (m1,k1)
     emb1 = vert_emb[faces[:, 1]]  # (m1,k1)
@@ -308,22 +377,32 @@ def project_to_mesh(vert_emb, faces, points_emb, vertind, lmax, Deltamin, dmin=N
 
     Parameters
     ----------------------------
-    vert_emb    : (n1, p) coordinates of the mesh vertices
-    faces       : (m1, 3) faces of the mesh defined as indices of vertices
-    points_emb  : (n2, p) coordinates of the pointcloud
-    vertind     : int - index of the vertex to project
-    lmax        : (m1,) value of lmax (max edge length for each face)
-    Deltamin    : (n2,) value of Deltamin (distance to nearest vertex)
-    dmin        : (m1,n2) - optional - values of dmin (distance to the nearest vertex of each face
+    vert_emb    :
+        (n1, p) coordinates of the mesh vertices
+    faces       :
+        (m1, 3) faces of the mesh defined as indices of vertices
+    points_emb  :
+        (n2, p) coordinates of the pointcloud
+    vertind     : int
+        index of the vertex to project
+    lmax        :
+        (m1,) value of lmax (max edge length for each face)
+    Deltamin    :
+        (n2,) value of Deltamin (distance to nearest vertex)
+    dmin        :
+        (m1,n2) - optional - values of dmin (distance to the nearest vertex of each face
                   for each vertex). Can be computed on the fly
-    dmin_params : dict - optional - if dmin is None, stores 'vert_sqnorm' a (n1,) array of squared norms
+    dmin_params : dict, optional
+        if dmin is None, stores 'vert_sqnorm' a (n1,) array of squared norms
                   of vertices embeddings, and 'points_sqnorm' a (n2,) array of squared norms
                   of points embeddings. Helps speed up computation of dmin
 
-    Output
+    Returns
     -----------------------------
-    min_faceind : int - index of the face on which the vertex is projected
-    min_bary    : (3,) - barycentric coordinates on the chosen face
+    min_faceind : int
+        index of the face on which the vertex is projected
+    min_bary    : np.ndarray
+        (3,) - barycentric coordinates on the chosen face
     """
     dmin_params = dict() if dmin_params is None else dmin_params
     # Obtain deltamin
@@ -360,14 +439,19 @@ def barycentric_to_precise(faces, face_match, bary_coord, n_vertices=None):
 
     Parameters
     ----------------------------
-    faces      : (m,3) - Set of faces defined by index of vertices.
-    face_match : (n2,) - indices of the face assigned to each point
-    bary_coord : (n2,3) - barycentric coordinates of each point within the face
-    n_vertices : int - number of vertices in the target mesh (on which faces are defined)
+    faces      :
+        (m,3) - Set of faces defined by index of vertices.
+    face_match :
+        (n2,) - indices of the face assigned to each point
+    bary_coord :
+        (n2,3) - barycentric coordinates of each point within the face
+    n_vertices : int
+        number of vertices in the target mesh (on which faces are defined)
 
-    Output
+    Returns
     ----------------------------
-    precise_map : (n2,n1) - precise point to point map
+    precise_map : scipy.sparse.csr_matrix
+        (n2,n1) - precise point to point map
     """
     if n_vertices is None:
         n_vertices = 1 + faces.max()
@@ -393,7 +477,7 @@ def point_to_triangles_projection(triangles, point, return_bary=False):
 
     This functions projects a p-dimensional point on each of the given p-dimensional triangle.
 
-    This is a parallelized version of pointTriangleDistance.
+    This is a parallelized version of `pointTriangleDistance`.
 
     All operations are parallelized, which makes the code quite hard to read. For an easier take,
     follow the code in the function below (not written by me) for projection on a single triangle.
@@ -403,7 +487,7 @@ def point_to_triangles_projection(triangles, point, return_bary=False):
     The algorithm first find for each triangle in which of the following region the projected point
     lies, then solves for each region.
 
-
+    IGNORE:
            ^t
      \     |
       \reg2|
@@ -422,22 +506,30 @@ def point_to_triangles_projection(triangles, point, return_bary=False):
     -------*-------*------->s
            |P0      \
      reg4  | reg5    \ reg6
+    IGNORE
 
-     Most notations come from :
-        [1] "David Eberly, 'Distance Between Point and Triangle in 3D',
-    Geometric Tools, LLC, (1999)"
+    .. note::
+        Most notations come from :
+            [1] "David Eberly, 'Distance Between Point and Triangle in 3D', Geometric Tools, LLC, (1999)"
 
     Parameters
     -------------------------------
-    triangles   : (m,3,p) set of m p-dimensional triangles
-    point       : (p,) coordinates of the point
-    return_bary : Whether to return barycentric coordinates inside each triangle
+    triangles   :
+        (m,3,p) set of m p-dimensional triangles
+    point       :
+        (p,) coordinates of the point
+    return_bary :
+        Whether to return barycentric coordinates inside each triangle
 
-    Output
+    Returns
     -------------------------------
-    final_dists : (m,) distance from the point to each of the triangle
-    projections : (m,p) coordinates of the projected point
-    bary_coords : (m,3) barycentric coordinates of the projection within each triangle
+    final_dists :
+        (m,) distance from the point to each of the triangle
+    projections :
+        (m,p) coordinates of the projected point
+    bary_coords :
+        (m,3) barycentric coordinates of the projection within each triangle
+
     """
 
     if point.ndim == 2:
@@ -731,8 +823,9 @@ def pointTriangleDistance(TRI, P, return_bary=False):
     r"""
     Computes distance between a point and a triangle in a p-dimensional space
 
-    Based on the implementation in (modified to return barycentric coordinates of the projection):
-    https://gist.github.com/joshuashaffer/99d58e4ccbd37ca5d96e
+    .. note::
+        Based on the implementation in (modified to return barycentric coordinates of the projection):
+        https://gist.github.com/joshuashaffer/99d58e4ccbd37ca5d96e
 
     DESCRIPTION
       Calculate the distance of a given point P from a triangle TRI.
@@ -748,6 +841,7 @@ def pointTriangleDistance(TRI, P, return_bary=False):
     Geometric Tools, LLC, (1999)"
     http:\\www.geometrictools.com/Documentation/DistancePoint3Triangle3.pdf
 
+    IGNORE:
            ^t
      \     |
       \reg2|
@@ -767,19 +861,25 @@ def pointTriangleDistance(TRI, P, return_bary=False):
            |P0      \
      reg4  | reg5    \ reg6
 
-
+    IGNORE
 
     Parameters
     -------------------------------
-    TRI         : (3,p) a p-dimensional triangle
-    P           : (p,) coordinates of the point
-    return_bary : Whether to return barycentric coordinates inside each triangle
+    TRI         :
+        (3,p) a p-dimensional triangle
+    P           :
+        (p,) coordinates of the point
+    return_bary :
+        Whether to return barycentric coordinates inside each triangle
 
-    Output
+    Returns
     -------------------------------
-    dist        : float - distance from the point to each of the triangle
-    projection  : (p,) coordinates of the projected point
-    bary_coords : (3,) barycentric coordinates of the projection within each triangle
+    dist        : float
+        distance from the point to each of the triangle
+    projection  :
+        (p,) coordinates of the projected point
+    bary_coords :
+        (3,) barycentric coordinates of the projection within each triangle
     """
     # rewrite triangle in normal form
     B = TRI[0, :]

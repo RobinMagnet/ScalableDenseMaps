@@ -1,0 +1,6 @@
+numpy
+scipy
+pykeops
+tqdm
+scikit-learn
+torch

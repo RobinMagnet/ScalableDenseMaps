@@ -1,5 +1,5 @@
 import torch as th
-
+from ..numpy import nn_utils as np_nn_utils
 
 try:
     import pykeops
@@ -32,7 +32,9 @@ def compute_sqdistmat(X, Y, normalized=False):
 def nn_query(X, Y, use_keops=None):
     """
     Computes the nearest neighbor query between two sets of points X and Y.
-    Use KeOps for efficient computation if available and more than 25k points
+    Use KeOps for efficient computation if available and more than 25k points.
+
+    If not on GPU, uses numpy nn
 
     Parameters
     ----------
@@ -48,6 +50,10 @@ def nn_query(X, Y, use_keops=None):
     torch.Tensor
         The indices of the nearest neighbors of each point of Y in X, of shape (M,) or (B, M).
     """
+    if not X.is_cuda or not Y.is_cuda:
+        inds = np_nn_utils.nn_query(X.cpu().numpy(), Y.cpu().numpy())
+        return th.tensor(inds, device=X.device)
+
     if use_keops is None:
         if X.ndim == 2:
             size = X.shape[0] * Y.shape[0]
@@ -83,7 +89,7 @@ def nn_query_dense(X, Y):
     distmat = compute_sqdistmat(X, Y)  # (B, N, M)
 
     return distmat.argmin(-2)
-    
+
 
 def nn_query_keops(X, Y):
     """
@@ -108,5 +114,5 @@ def nn_query_keops(X, Y):
                     ],
                     reduction_op='ArgMin',
                     axis=0)
-    
+
     return formula(X, Y).squeeze(-1)
