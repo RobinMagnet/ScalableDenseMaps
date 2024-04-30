@@ -36,7 +36,7 @@ P21.cuda()
 P21.cpu()
 
 uv1 = # Get uv-coordinates on mesh1  (N1, 2)
-uv2 = P21 @ uv1  # Transfered uv coordinatres (n2, 2)
+uv2 = P21 @ uv1  # Transfered uv coordinates (n2, 2)
 
 P21_dense = P21._to_dense() # I can get the (N2, N1) map back
 ```
