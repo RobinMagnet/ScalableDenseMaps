@@ -51,7 +51,7 @@ def nn_query(X, Y, use_keops=None):
         The indices of the nearest neighbors of each point of Y in X, of shape (M,) or (B, M).
     """
     if not X.is_cuda or not Y.is_cuda:
-        inds = np_nn_utils.nn_query(X.cpu().numpy(), Y.cpu().numpy())
+        inds = np_nn_utils.knn_query(X.cpu().numpy(), Y.cpu().numpy())
         return th.tensor(inds, device=X.device)
 
     if use_keops is None:
