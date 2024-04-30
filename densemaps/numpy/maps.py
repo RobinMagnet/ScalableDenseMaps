@@ -48,9 +48,10 @@ class PointWiseMap:
     def pull_back(self, f):
         """Pull back a function $f$.
         Three possibilities:
-        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
-        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
-        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
+
+        #. f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        #. f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        #. f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
         Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
@@ -169,9 +170,10 @@ class SparseMap(PointWiseMap):
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
-        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
-        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
-        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
+
+        #. f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        #. f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        #. f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
         Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
@@ -252,9 +254,10 @@ class P2PMap(PointWiseMap):
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
-        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,) (or (B, N2,) if the map is batched)
-        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p) (or (B, N2, p) if the map is batched)
-        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
+
+        #. f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,) (or (B, N2,) if the map is batched)
+        #. f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p) (or (B, N2, p) if the map is batched)
+        #. f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
         Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
@@ -435,9 +438,10 @@ class KernelDenseDistMap(PointWiseMap):
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
-        - f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
-        - f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
-        - f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
+
+        #. f is a function on S1, of shape (N1,), then the output is a function on S2, of shape (N2,)
+        #. f represents multiple function on S1, of shape (N1, p), then the output is a function on S2, of shape (N2, p)
+        #. f represents a batch multiple function on S1, of shape (B, N1, p), then the output is a function on S2, of shape (B, N2, p)
 
         Note tht the case where f is a batch of a single function (B, N1) is not supported, and one should then use `f[..., None]`
 
