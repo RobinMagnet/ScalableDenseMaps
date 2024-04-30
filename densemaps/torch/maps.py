@@ -780,7 +780,7 @@ class KernelDistMap(PointWiseMap):
     def _to_sparse(self):
         return self._to_dense()
 
-    def _to_dense():
+    def _to_dense(self):
         densemap = EmbKernelDenseDistMap(self.emb1, self.emb2, blur=self.blur, normalize=False, normalize_emb=False, dist_type=self.dist_type)
 
         return densemap._to_dense()
