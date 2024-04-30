@@ -257,7 +257,7 @@ class SparseMap(PointWiseMap):
         f_pb : torch.Tensor
             (N2,), (N2, p) or (B, N2, p)
         """
-        if map.ndim == 3:
+        if self.map.ndim == 3:
             if f.ndim < 3:
                 f_pb = th.stack([self.map[i] @ f for i in range(self.map.shape[0])])
             else:
