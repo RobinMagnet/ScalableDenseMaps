@@ -536,7 +536,7 @@ class KernelDenseDistMap(PointWiseMap):
     r"""Map represented by a row-normalized dense matrix obtained from an element-wise exponential.
 
     The matrix is of size `(N2, N1)`, and has values
-    $P_{ij} = \frac{1}{\sum_j D_{ij} \exp(D_{ij})$ where $D$ is some matrix
+    $P_{ij} = \frac{1}{\sum_j \exp(D_{ij})} \exp(D_{ij})$ where $D$ is some matrix
 
     Only D has to be provided
 
