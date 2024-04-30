@@ -82,6 +82,18 @@ class PointWiseMap:
         """
         raise NotImplementedError("Shape not implemented")
 
+    @property
+    def ndim(self):
+        """
+        Number of dimensions of the map.
+
+        Returns
+        -------------------
+        ndim : int
+            Number of dimensions
+        """
+        return len(self.shape)
+
     def pull_back(self, f):
         """Pull back a function $f$.
         Three possibilities:

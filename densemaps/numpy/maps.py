@@ -79,6 +79,18 @@ class PointWiseMap:
         """
         raise NotImplementedError("Shape not implemented")
 
+    @property
+    def ndim(self):
+        """
+        Number of dimensions of the map.
+
+        Returns
+        -------------------
+        ndim : int
+            Number of dimensions
+        """
+        return len(self.shape)
+
     def __matmul__(self, other):
         if issubclass(type(other), PointWiseMap):
             return SparseMap(self._to_sparse() @ other._to_sparse())
