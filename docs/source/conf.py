@@ -48,7 +48,7 @@ exclude_patterns = []
 html_theme = 'furo'
 html_static_path = ['_static']
 
-autodoc_mock_imports = ["sklearn"]
+autodoc_mock_imports = ["sklearn", "numpy"]
 
 
 from sphinx.ext.autodoc import between
