@@ -8,6 +8,10 @@ import sys
 sys.path.insert(0, pathlib.Path(__file__).parents[2].resolve().as_posix())
 print(pathlib.Path(__file__).parents[2].resolve().as_posix())
 
+import densemaps
+import densemaps.numpy
+import densemaps.torch
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
@@ -47,8 +51,6 @@ exclude_patterns = []
 
 html_theme = 'furo'
 html_static_path = ['_static']
-
-autodoc_mock_imports = ["sklearn", "numpy"]
 
 
 from sphinx.ext.autodoc import between
