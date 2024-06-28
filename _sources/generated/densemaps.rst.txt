@@ -1,0 +1,32 @@
+﻿densemaps
+=========
+
+.. automodule:: densemaps
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+
+
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   densemaps.numpy
+   densemaps.torch
+

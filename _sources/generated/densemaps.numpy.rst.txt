@@ -1,0 +1,33 @@
+densemaps.numpy
+===============
+
+.. automodule:: densemaps.numpy
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+   
+   
+   
+
+
+
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   densemaps.numpy.maps
+   densemaps.numpy.nn_utils
+   densemaps.numpy.point_to_triangle
+
