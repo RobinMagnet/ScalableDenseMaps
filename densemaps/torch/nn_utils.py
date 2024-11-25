@@ -3,9 +3,11 @@ from ..numpy import nn_utils as np_nn_utils
 
 try:
     import pykeops
+
     KEOPS_AVAILABLE = True
 except ImportError:
     KEOPS_AVAILABLE = False
+
 
 def compute_sqdistmat(X, Y, normalized=False):
     """
@@ -25,9 +27,14 @@ def compute_sqdistmat(X, Y, normalized=False):
     """
     if not normalized:
         # (..., N, 1) + (...,1, M)
-        return th.square(X).sum(-1).unsqueeze(-1) + th.square(Y).sum(-1).unsqueeze(-2) - 2 * (X @ Y.mT)
+        return (
+            th.square(X).sum(-1).unsqueeze(-1)
+            + th.square(Y).sum(-1).unsqueeze(-2)
+            - 2 * (X @ Y.mT)
+        )
     else:
         return 2 - 2 * X @ Y.mT
+
 
 def nn_query(X, Y, use_keops=None):
     """
@@ -108,11 +115,14 @@ def nn_query_keops(X, Y):
     torch.Tensor
         The indices of the nearest neighbors of each point of Y in X, of shape (M,) or (B, M).
     """
-    formula = pykeops.torch.Genred('SqDist(X,Y)',
-                    [f'X = Vi({X.shape[-1]})',          # First arg  is a parameter,    of dim 1
-                    f'Y = Vj({Y.shape[-1]})',          # Second arg is indexed by "i", of dim
-                    ],
-                    reduction_op='ArgMin',
-                    axis=0)
+    formula = pykeops.torch.Genred(
+        "SqDist(X,Y)",
+        [
+            f"X = Vi({X.shape[-1]})",  # First arg  is a parameter,    of dim 1
+            f"Y = Vj({Y.shape[-1]})",  # Second arg is indexed by "i", of dim
+        ],
+        reduction_op="ArgMin",
+        axis=0,
+    )
 
     return formula(X, Y).squeeze(-1)

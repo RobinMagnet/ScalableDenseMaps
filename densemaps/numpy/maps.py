@@ -1,7 +1,3 @@
-import sys
-import os
-from pathlib import Path
-
 import numpy as np
 import scipy.sparse as sparse
 from scipy.special import logsumexp
@@ -32,6 +28,7 @@ class PointWiseMap:
         Names of the arrays stored in the object. Used to transfer to torch and to GPU.
 
     """
+
     def __init__(self, array_names=None):
         self.array_names = []
         self._add_array_name(array_names)
@@ -132,8 +129,6 @@ class PointWiseMap:
         raise NotImplementedError
 
 
-
-
 class SparseMap(PointWiseMap):
     """Map represented by a sparse matrix.
 
@@ -144,6 +139,7 @@ class SparseMap(PointWiseMap):
     map : scipy.sparse.csr_matrix
         (N2, N1) or (N2, N1)
     """
+
     def __init__(self, map):
         super().__init__(array_names=["map"])
 
@@ -216,6 +212,7 @@ class SparseMap(PointWiseMap):
     def _to_sparse(self):
         return self.map
 
+
 class P2PMap(PointWiseMap):
     r"""
     Point to point map from a set S2 to a set S1.
@@ -228,6 +225,7 @@ class P2PMap(PointWiseMap):
     n1 : int or None
         Number of points in S1. If None, n1 = p2p.max()+1
     """
+
     def __init__(self, p2p_21, n1=None):
 
         super().__init__(array_names=["p2p_21"])
@@ -237,7 +235,7 @@ class P2PMap(PointWiseMap):
         self.n2 = self.p2p_21.shape[-1]
         self._n1 = n1
 
-        self.max_ind = self.p2p_21.max().item() if n1 is None else n1-1
+        self.max_ind = self.p2p_21.max().item() if n1 is None else n1 - 1
 
     @property
     def shape(self):
@@ -261,7 +259,7 @@ class P2PMap(PointWiseMap):
         -------------------
         n1 : int
         """
-        return self._n1 if self._n1 is not None else self.max_ind+1
+        return self._n1 if self._n1 is not None else self.max_ind + 1
 
     def pull_back(self, f):
         """Pull back a function $f$.
@@ -284,14 +282,20 @@ class P2PMap(PointWiseMap):
             (N2,), (N2, p) or (B, N2, p)
         """
         # Ensure f doesn't have too few entries
-        if (f.ndim==1 and f.shape[-1] <= self.max_ind):
-            raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-1]}')
-        elif (f.ndim > 1 and f.shape[-2] <= self.max_ind):
-            raise ValueError(f'Function f doesn\'t have enough entries, need at least {1+self.max_ind} but only has {f.shape[-2]}')
+        if f.ndim == 1 and f.shape[-1] <= self.max_ind:
+            raise ValueError(
+                f"Function f doesn't have enough entries, need at least {1+self.max_ind} but only has {f.shape[-1]}"
+            )
+        elif f.ndim > 1 and f.shape[-2] <= self.max_ind:
+            raise ValueError(
+                f"Function f doesn't have enough entries, need at least {1+self.max_ind} but only has {f.shape[-2]}"
+            )
 
         # Ensure potential batch dimensions match
         if f.ndim == 3 and self.p2p_21.ndim == 2:
-            assert f.shape[0] == self.p2p_21.shape[0], "Batch size of f and p2p_21 should match"
+            assert (
+                f.shape[0] == self.p2p_21.shape[0]
+            ), "Batch size of f and p2p_21 should match"
 
         if f.ndim == 1 or f.ndim == 2:  # (N1,) or (N1, p)
             f_pb = f[self.p2p_21]  # (n2, p) or (B, n2, p)
@@ -299,9 +303,9 @@ class P2PMap(PointWiseMap):
             if self.p2p_21.ndim == 1:
                 f_pb = f[:, self.p2p_21]  # (B, n2, k)
             else:
-                f_pb = f[np.arange(f.shape[0])[:,None], self.p2p_21]
+                f_pb = f[np.arange(f.shape[0])[:, None], self.p2p_21]
         else:
-            raise ValueError('Function is only dim 1, 2 or 3')
+            raise ValueError("Function is only dim 1, 2 or 3")
 
         return f_pb
 
@@ -324,7 +328,11 @@ class P2PMap(PointWiseMap):
 
     def _to_sparse(self):
         assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
-        return sparse.csc_matrix((np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)), shape=(self.n2, self.n1))
+        return sparse.csc_matrix(
+            (np.ones_like(self.p2p_21), (np.arange(self.n2), self.p2p_21)),
+            shape=(self.n2, self.n1),
+        )
+
 
 class PreciseMap(SparseMap):
     """
@@ -342,11 +350,14 @@ class PreciseMap(SparseMap):
     faces1 :  np.ndarray
         (N1, 3) All the Faces of S1.
     """
+
     def __init__(self, v2face_21, bary_coords, faces1):
         if v2face_21.ndim == 2:
-            raise ValueError('Batched version not implemented yet.')
+            raise ValueError("Batched version not implemented yet.")
 
-        sparse_map = barycentric_to_precise(faces1, v2face_21, bary_coords, n_vertices=None)  # (n2, n1)
+        sparse_map = barycentric_to_precise(
+            faces1, v2face_21, bary_coords, n_vertices=None
+        )  # (n2, n1)
         super().__init__(map=sparse_map)
         self._nn_map = None
 
@@ -366,9 +377,12 @@ class EmbP2PMap(P2PMap):
     n_jobs : int
         Number of jobs to use for the NN query
     """
+
     def __init__(self, emb1, emb2, n_jobs=1):
-        assert emb1.shape[-1] == emb2.shape[-1], "Embeddings should have the same dimension."
-        self.emb1 = emb1 # (N1, p) or (B, N1, p)
+        assert (
+            emb1.shape[-1] == emb2.shape[-1]
+        ), "Embeddings should have the same dimension."
+        self.emb1 = emb1  # (N1, p) or (B, N1, p)
         self.emb2 = emb2  # (N2, p) or (B, N2, p)
         self.n_jobs = n_jobs
 
@@ -376,6 +390,7 @@ class EmbP2PMap(P2PMap):
 
         super().__init__(p2p_21=p2p_21, n1=self.emb1.shape[-2])
         self._add_array_name(["emb1", "emb2"])
+
 
 class EmbPreciseMap(PreciseMap):
     """
@@ -394,16 +409,27 @@ class EmbPreciseMap(PreciseMap):
     n_jobs : int
         Number of jobs to use for the NN query in the point_to_precise computation
     """
+
     def __init__(self, emb1, emb2, faces1, n_jobs=1):
-        assert emb1.shape[-1] == emb2.shape[-1], "Embeddings should have the same dimension."
+        assert (
+            emb1.shape[-1] == emb2.shape[-1]
+        ), "Embeddings should have the same dimension."
         self.emb1 = emb1  # (N1, p)
         self.emb2 = emb2  # (N2, p)
 
-        v2face_21, bary_coords = nn_query_precise_np(self.emb1, faces1, self.emb2, return_dist=False, batch_size=min(2000, emb2.shape[0]), n_jobs=n_jobs)
+        v2face_21, bary_coords = nn_query_precise_np(
+            self.emb1,
+            faces1,
+            self.emb2,
+            return_dist=False,
+            batch_size=min(2000, emb2.shape[0]),
+            n_jobs=n_jobs,
+        )
 
         # th.cuda.empty_cache()
         super().__init__(v2face_21=v2face_21, bary_coords=bary_coords, faces1=faces1)
         self._add_array_name(["emb1", "emb2"])
+
 
 class KernelDenseDistMap(PointWiseMap):
     r"""Map represented by a row-normalized dense matrix obtained from an element-wise exponential.
@@ -424,7 +450,7 @@ class KernelDenseDistMap(PointWiseMap):
 
     def __init__(self, log_matrix, lse_row=None, lse_col=None):
         super().__init__(array_names=["log_matrix"])
-        self.log_matrix = log_matrix   # (..., N2, N1)
+        self.log_matrix = log_matrix  # (..., N2, N1)
         self.lse_row = lse_row  # (..., N2)
         self.lse_col = lse_col  # (..., N1)
 
@@ -444,7 +470,7 @@ class KernelDenseDistMap(PointWiseMap):
             self.lse_row = logsumexp(self.log_matrix, dim=-1)  # (..., N2)
             self._add_array_name(["lse_row"])
 
-        return np.exp(self.log_matrix - self.lse_row[...,None])
+        return np.exp(self.log_matrix - self.lse_row[..., None])
 
     def pull_back(self, f):
         """Pull back a function $f$.
@@ -495,7 +521,9 @@ class KernelDenseDistMap(PointWiseMap):
         map_t : KernelDenseDistMap
             Transpose map
         """
-        obj = KernelDenseDistMap(self.log_matrix.T, lse_row=self.lse_col, lse_col=self.lse_row)
+        obj = KernelDenseDistMap(
+            self.log_matrix.T, lse_row=self.lse_col, lse_col=self.lse_row
+        )
         obj._inv_nn_map, obj._nn_map = self._nn_map, self._inv_nn_map
         if obj._nn_map is not None:
             obj._add_array_name(["_nn_map"])
@@ -506,6 +534,7 @@ class KernelDenseDistMap(PointWiseMap):
     @property
     def shape(self):
         return self.log_matrix.shape
+
 
 class EmbKernelDenseDistMap(KernelDenseDistMap):
     r"""Kernel Map, computed from embeddings.
@@ -532,7 +561,16 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
         {"sqdist", "inner"} Type of score to use.
 
     """
-    def __init__(self, emb1, emb2, blur=None, normalize=False, normalize_emb=False, dist_type="sqdist"):
+
+    def __init__(
+        self,
+        emb1,
+        emb2,
+        blur=None,
+        normalize=False,
+        normalize_emb=False,
+        dist_type="sqdist",
+    ):
 
         assert dist_type in ["sqdist", "inner"], "Invalid distance type."
 
@@ -541,16 +579,19 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
 
         # Normalize embeddings
         if normalize_emb:
-            norm1 = np.linalg.norm(self.emb1, axis=-1, keepdims=True)  # (N1, 1) or (B, N1, 1)
+            norm1 = np.linalg.norm(
+                self.emb1, axis=-1, keepdims=True
+            )  # (N1, 1) or (B, N1, 1)
             norm2 = np.linalg.norm(self.emb2, axis=-1, keepdims=True)
             self.emb1 = self.emb1 / np.clip(norm1, 1e-6, None)  # (N1, p) or (B, N1, p)
             self.emb2 = self.emb2 / np.clip(norm2, 1e-6, None)  # (N2, p) or (B, N2, p)
 
-
         if dist_type == "sqdist":
-            dist = compute_sqdistmat(self.emb2, self.emb1, normalized=normalize_emb)  # (N2, N1)  or (B, N2, N1)
+            dist = compute_sqdistmat(
+                self.emb2, self.emb1, normalized=normalize_emb
+            )  # (N2, N1)  or (B, N2, N1)
         elif dist_type == "inner":
-            dist = - self.emb2 @ self.emb1.permute(-2, -1)  # (N2, N1)  or (B, N2, N1)
+            dist = -self.emb2 @ self.emb1.permute(-2, -1)  # (N2, N1)  or (B, N2, N1)
 
         self.dist_type = dist_type
 
@@ -560,7 +601,7 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
             assert dist_type == "sqdist", "Normalization only supported for sqdist."
             self.blur = blur * np.sqrt(dist.max())
 
-        log_matrix = - dist / (2 * self.blur**2)  # (N2, N1)  or (B, N2, N1)
+        log_matrix = -dist / (2 * self.blur**2)  # (N2, N1)  or (B, N2, N1)
 
         super().__init__(log_matrix=log_matrix)
         self._add_array_name(["emb1", "emb2", "blur"])
