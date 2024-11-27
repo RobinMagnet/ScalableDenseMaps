@@ -1,0 +1,20 @@
+densemaps.torch.maps
+====================
+
+.. automodule:: densemaps.torch.maps
+
+   
+   .. rubric:: Classes
+
+   .. autosummary::
+   
+      EmbKernelDenseDistMap
+      EmbP2PMap
+      EmbPreciseMap
+      KernelDenseDistMap
+      KernelDistMap
+      P2PMap
+      PointWiseMap
+      PreciseMap
+      SparseMap
+   
