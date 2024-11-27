@@ -19,6 +19,37 @@ from .nn_utils import nn_query, compute_sqdistmat
 from ..numpy.point_to_triangle import barycentric_to_precise
 
 
+def _sparse_matmul(x, y):
+    """
+    Matrix multiplication of two (potentially batched) sparse matrices.
+
+    Parameters
+    -------------------
+    x : torch.sparse_coo_tensor
+        (N, P) or (B, N, P)
+    y : torch.sparse_coo_tensor
+        (P, Q) or (B, P, Q)
+
+    Output
+    -------------------
+    prod : torch.sparse_coo_tensor
+        (N, Q) or (B, N, Q) tensor with (potentially broadcaster multiplication)
+    """
+    assert x.shape[-1] == y.shape[-2], "Inner dimensions should match"
+    if x.ndim > 3:
+        raise NotImplementedError("Multi Batched multiplication not implemented yet.")
+    elif x.ndim == 3:
+        if y.ndim == 3:
+            assert x.shape[0] == y.shape[0], "Batch size of x and y should match"
+            return th.stack([x[i] @ y[i] for i in range(x.shape[0])])
+        else:
+            return th.stack([x[i] @ y for i in range(x.shape[0])])
+    elif y.ndim == 3:
+        return th.stack([x @ y[i] for i in range(y.shape[0])])
+
+    return x @ y
+
+
 class PointWiseMap:
     r"""
     Root class representing a pointwise map. Not supposed to be instanciated in itself.
@@ -126,36 +157,22 @@ class PointWiseMap:
         """
         raise NotImplementedError
 
-    def _sparse_matmul(self, x, y):
-        """Matrix multiplication of two (potentially batched) sparse matrices."""
-        if x.ndim > 3:
-            raise NotImplementedError(
-                "Multi Batched multiplication not implemented yet."
-            )
-        elif x.ndim == 3:
-            if y.ndim == 3:
-                return th.stack([x[i] @ y[i] for i in range(x.shape[0])])
-            else:
-                return th.stack([x[i] @ y for i in range(x.shape[0])])
-        elif y.ndim == 3:
-            return th.stack([x @ y[i] for i in range(y.shape[0])])
-
     def __matmul__(self, other):
         """Matrix multiplication of two maps."""
         if issubclass(type(other), PointWiseMap):
             other_sparse = other._to_sparse()
             self_sparse = self._to_sparse()
 
-            if (
-                other_sparse.layout is th.sparse_coo
-                and self_sparse.layout is th.sparse_coo
-            ):
-                prod = self._sparse_matmul(self_sparse, other_sparse)
+            is_self_sparse = self_sparse.layout is th.sparse_coo
+            is_other_sparse = other_sparse.layout is th.sparse_coo
+
+            if is_other_sparse and is_self_sparse:
+                prod = _sparse_matmul(self_sparse, other_sparse)
                 return SparseMap(prod)
-            elif self_sparse.layout is th.strided and other_sparse.layout is th.strided:
+            elif ~is_self_sparse and ~is_other_sparse:
                 prod = self_sparse @ other_sparse
                 return SparseMap(prod)
-            elif other_sparse.layout is th.sparse_coo:
+            elif is_other_sparse:
                 if other_sparse.ndim == 3:
                     prod = th.stack(
                         [
@@ -165,7 +182,7 @@ class PointWiseMap:
                     )
                 else:
                     prod = self_sparse @ other_sparse
-            elif self_sparse.layout is th.sparse_coo:
+            elif is_self_sparse:
                 if self_sparse.ndim == 3:
                     prod = th.stack(
                         [
@@ -862,6 +879,8 @@ class KernelDistMap(PointWiseMap):
 
     @property
     def shape(self):
+        if self.emb1.ndim == 3:
+            return th.Size([self.emb1.shape[0], self.n2, self.n1])
         return th.Size([self.n2, self.n1])
 
     def get_maxsqnorm(self):
