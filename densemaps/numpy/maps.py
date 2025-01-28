@@ -467,7 +467,7 @@ class KernelDenseDistMap(PointWiseMap):
 
     def _to_dense(self):
         if self.lse_row is None:
-            self.lse_row = logsumexp(self.log_matrix, dim=-1)  # (..., N2)
+            self.lse_row = logsumexp(self.log_matrix, axis=-1)  # (..., N2)
             self._add_array_name(["lse_row"])
 
         return np.exp(self.log_matrix - self.lse_row[..., None])
@@ -591,7 +591,12 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
                 self.emb2, self.emb1, normalized=normalize_emb
             )  # (N2, N1)  or (B, N2, N1)
         elif dist_type == "inner":
-            dist = -self.emb2 @ self.emb1.permute(-2, -1)  # (N2, N1)  or (B, N2, N1)
+            if self.emb1.ndim == 2:
+                dist = -self.emb2 @ self.emb1.T
+            else:
+                dist = -self.emb2 @ self.emb1.transpose(
+                    0, 2, 1
+                )  # (N2, N1)  or (B, N2, N1)
 
         self.dist_type = dist_type
 
