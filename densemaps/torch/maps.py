@@ -618,6 +618,9 @@ class EmbPreciseMap(PreciseMap):
         self.emb1 = emb1.contiguous()  # (N1, K)
         self.emb2 = emb2.contiguous()  # (N2, K)
 
+        assert self.emb1.ndim == 2, "Batched version not implemented yet."
+        assert self.emb1.ndim == self.emb2.ndim, "Batched version not implemented yet."
+
         v2face_21, bary_coords = nn_query_precise_torch(
             self.emb1,
             faces1,
