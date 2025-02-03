@@ -1,0 +1,23 @@
+densemaps.torch.point\_to\_triangle
+===================================
+
+.. automodule:: densemaps.torch.point_to_triangle
+
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      compute_per_tri_max_edge_length
+      compute_per_triangle_min_dist
+      mycdist
+      nn_query_precise_torch
+      project_pc_to_triangles
+      project_to_mesh_multi
+   
+   .. rubric:: Classes
+
+   .. autosummary::
+   
+      PointsTriangleProjLayer
+   
