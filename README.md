@@ -1,27 +1,59 @@
-# ScalableDenseMaps
+# Densemaps : Abstract Correspondence Maps for 3D Geometry
+
+<p align="center">
+<img src="img/maps.png">
+</p>
+
 
 [![](https://github.com/RobinMagnet/ScalableDenseMaps/actions/workflows/documentation.yml/badge.svg)](https://robinmagnet.github.io/ScalableDenseMaps/)
 
+Welcome to the documentation of `densemaps` !
 
-This library has two purposes:
- 1. It provides a unified representation of correspondences between objects such as surfaces or point clouds. On **both numpy and torch**
- 2. It provides a GPU-memory scalable version of such maps when they can be represented by dense matrices, as presented in the [*Memory-Scalable and Simplified Functional Map Learning*](https://arxiv.org/abs/2404.00330) paper.
+A lightweight library that offers:
+ 1. Unified correspondence representation for 3D objects (surfaces, point clouds) with NumPy and PyTorch support
+ 2. Memory-efficient dense matrix operations for large-scale geometric maps, based on our recent research [*Memory-Scalable and Simplified Functional Map Learning*](https://arxiv.org/abs/2404.00330).
+
+# Installing
+
+Pip installation is not yet available.
+
+You can clone the directory using
+
+```bash
+git clone https://github.com/RobinMagnet/ScalableDenseMaps.git
+```
+
+And install the dependencies using
+```bash
+pip install -r requirements.txt
+```
 
 
-# Unified Representation
+# Shape Correspondence Representations
 
-In the case of surfaces $S_1$ and $S_2$ with respectively $n_1$ and $n_2$ vertices, correspondences $T:S_2\to S_1$ are usually represented in one of the following way:
- 1. A vertex to vertex map, where $T$ maps each vertex of $S_2$ to a vertex of $S_1$. It is then usually represented as an array (or tensor) `p2p_21` of shape $n_2$, where `p2p_21[i]` gives the index of the target vertex in $S_1$ for vertex $i$ in $S_2$. When writing results, one usually use an equivalent matrix representation $\Pi\in\{0,1\}^{n_2\times n_1}$, where $\Pi_{ij}=1$ iff $T(x_i^2) = x_j^1$ (or `p2p_21[i]=j`).
-2. A vertex to point map, where each $T$ maps each vertex of $S_2$ to a point of $S_1$, which can lie on any of the face of $S_1$. One can again use a matrix representation $\Pi\in[0,1]^{n_2\times n_1}$, with $\forall i,\ \sum_j \Pi_{ij} = 1$, and at most $3$ non-zero entry per-line can easily be defined. See [this paper](https://onlinelibrary.wiley.com/doi/full/10.1111/cgf.13254) for more details.
-3. A "fuzzy" map $T$, which is represented by a **dense** matrix $\Pi \in[0,1]^{n_2\times n_1}$. For exampe, given embeddings $e_i^1$ and $e_j^2$ on for each vertex of each shape, the softmax map $\Pi = \frac{1}{\sum_j \exp(S_{ij})}\exp(S_{ij})$, with $(S_{ij})_{ij}$ a matrix of scores (or proximity) for all pairs of embeddings $e_i^1$ and $e_j^2$
+> **Note**: Throughout this documentation, maps $T$ go from surface $S_2$ to surface $S_1$ (not the reverse).
 
-In any of these case, the exact representation of $\Pi$ is usually not useful, and one usually seeks to perform some operation with these maps such
-- Extraction a vertex-to-vertex map for any of these representation
-- Pulling back functions $f$ (such as uv coordinates) using $\Pi x$
-- Combining maps $\Pi_{13}=\Pi_{12} \Pi_{23}$
+This library unifies three common ways to represent correspondences between 3D surfaces $S_1$ and $S_2$ (with $n_1$ and $n_2$ vertices):
 
+ 1. **Vertex-to-Vertex Maps**: Direct mapping between vertices, represented as either:
+     - An array `p2p_21`$\in [0, \dots, n_1]^{n_2}$, where `p2p_21[i]` indicates which vertex in $S_1$ corresponds to vertex $i$ in $S_2$
+     - A binary matrix $\Pi\in\{0,1\}^{n_2\times n_1}$ where $\Pi_{ij}=1$ means vertex $i$ maps to vertex $j$
+2. **Vertex-to-Point Maps**: Maps vertices to arbitrary points on surface faces:
+    - Represented by $\Pi\in[0,1]^{n_2\times nc_1}$ with $\sum_j \Pi_{ij} = 1$
+    - Maximum 3 non-zero entries per row (barycentric coordinates)
+    - See more details *e.g* in this [this paper](https://onlinelibrary.wiley.com/doi/full/10.1111/cgf.13254)
+3. **Soft Maps**: Dense correspondence matrices:
+    - $\Pi\in[0,1]^{n_2\times n_1}$ from softmax over similarity scores
+    - Example: $\Pi_{ij} = \frac{\exp(S_{ij})}{\sum_j \exp(S_{ij})}$ where $S_{ij}$ measures similarity between embeddings
 
-This package provides simple wrapper around these representation, in either numpy or torch (all cuda-compatible).
+The common operations across all representations are:
+- Converting to vertex-to-vertex maps
+- Function transfer via $\Pi f$
+- Map composition: $\Pi_{13}=\Pi_{12} \Pi_{23}$
+
+The library implements these representations with both NumPy and PyTorch (CUDA-compatible) backends.
+
+# Example Code
 
 ```python
 from densemaps.torch import maps
