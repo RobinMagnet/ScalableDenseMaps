@@ -75,6 +75,12 @@ P21_dense = P21._to_dense() # I can get the (N2, N1) map back
 p2p_21 = P21.get_nn()  # I can get the (N2,) vertex to vertex map
 ```
 
+# Example of usage
+
+The `densemaps` package is used for instance in the following github repositories:
+- [Reversible Harmonic Maps](https://github.com/RobinMagnet/ReversibleHarmonicMaps.git) implementation in python
+- [Memory Scalable and Simplified Functional Map Learning](https://github.com/RobinMagnet/SimplifiedFmapsLearning.git) implementation
+
  # Citing this work
 
  If you use this work, please cite
