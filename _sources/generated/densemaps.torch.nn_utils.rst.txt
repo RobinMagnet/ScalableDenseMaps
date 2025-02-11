@@ -1,0 +1,15 @@
+densemaps.torch.nn\_utils
+=========================
+
+.. automodule:: densemaps.torch.nn_utils
+
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      compute_sqdistmat
+      nn_query
+      nn_query_dense
+      nn_query_keops
+   

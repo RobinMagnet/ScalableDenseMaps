@@ -1,0 +1,22 @@
+densemaps.numpy.point\_to\_triangle
+===================================
+
+.. automodule:: densemaps.numpy.point_to_triangle
+
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      barycentric_to_precise
+      compute_Deltamin
+      compute_all_dmin
+      compute_dmin
+      compute_lmax
+      mycdist
+      nn_query_precise_np
+      pointTriangleDistance
+      point_to_triangles_projection
+      project_pc_to_triangles
+      project_to_mesh
+   

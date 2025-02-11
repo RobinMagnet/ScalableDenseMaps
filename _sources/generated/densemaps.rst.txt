@@ -1,0 +1,14 @@
+﻿densemaps
+=========
+
+.. automodule:: densemaps
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   numpy
+   torch
