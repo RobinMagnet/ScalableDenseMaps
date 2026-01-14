@@ -355,6 +355,8 @@ class PreciseMap(SparseMap):
         if v2face_21.ndim == 2:
             raise ValueError("Batched version not implemented yet.")
 
+        self.v2f_21 = v2face_21.copy()  # (n2, )
+        self.bary_coords = bary_coords.copy()  # (n2, 3)
         sparse_map = barycentric_to_precise(
             faces1, v2face_21, bary_coords, n_vertices=None
         )  # (n2, n1)
