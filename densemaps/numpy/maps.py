@@ -207,7 +207,7 @@ class SparseMap(PointWiseMap):
         nn_map : np.ndarray
             (N2,) on the representation
         """
-        return self.map.argmax(-1)  # (N2, )
+        return np.asarray(self.map.argmax(-1)).squeeze(-1)  # (N2, )
 
     def _to_sparse(self):
         return self.map
