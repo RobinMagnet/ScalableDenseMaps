@@ -1,0 +1,19 @@
+densemaps.numpy.maps
+====================
+
+.. automodule:: densemaps.numpy.maps
+
+   
+   .. rubric:: Classes
+
+   .. autosummary::
+   
+      EmbKernelDenseDistMap
+      EmbP2PMap
+      EmbPreciseMap
+      KernelDenseDistMap
+      P2PMap
+      PointWiseMap
+      PreciseMap
+      SparseMap
+   

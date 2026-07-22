@@ -1,0 +1,13 @@
+densemaps.numpy.nn\_utils
+=========================
+
+.. automodule:: densemaps.numpy.nn_utils
+
+   
+   .. rubric:: Functions
+
+   .. autosummary::
+   
+      compute_sqdistmat
+      knn_query
+   

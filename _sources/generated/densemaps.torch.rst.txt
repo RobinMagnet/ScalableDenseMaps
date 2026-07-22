@@ -1,0 +1,15 @@
+densemaps.torch
+===============
+
+.. automodule:: densemaps.torch
+
+   
+.. rubric:: Modules
+
+.. autosummary::
+   :toctree:
+   :recursive:
+
+   maps
+   nn_utils
+   point_to_triangle
