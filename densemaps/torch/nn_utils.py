@@ -3,6 +3,7 @@ from ..numpy import nn_utils as np_nn_utils
 
 try:
     import pykeops
+    import pykeops.torch
 
     KEOPS_AVAILABLE = True
 except ImportError:
@@ -126,3 +127,54 @@ def nn_query_keops(X, Y):
     )
 
     return formula(X, Y).squeeze(-1)
+
+
+def nn_query_dist(X, Y, use_keops=None):
+    """
+    Computes, for each point of Y, the (Euclidean) distance to its nearest neighbor in X.
+
+    Same backend-selection logic as :func:`nn_query`, but returns distances rather than indices.
+
+    Parameters
+    ----------
+    X : torch.Tensor
+        The first set of points, of shape (N, D) or (B, N, D).
+    Y : torch.Tensor
+        The second set of points, of shape (M, D) or (B, M, D).
+    use_keops : bool
+        Whether to use KeOps for efficient computation. If None, use KeOps if available.
+
+    Returns
+    -------
+    torch.Tensor
+        The distance from each point of Y to its nearest neighbor in X, of shape (M,) or (B, M).
+    """
+    if not X.is_cuda or not Y.is_cuda:
+        dists, _ = np_nn_utils.knn_query(
+            X.cpu().numpy(), Y.cpu().numpy(), return_distance=True
+        )
+        return th.tensor(dists, device=X.device, dtype=X.dtype)
+
+    if use_keops is None:
+        if X.ndim == 2:
+            size = X.shape[0] * Y.shape[0]
+        else:
+            size = X.shape[-2] * Y.shape[-2] * X.shape[0]
+
+        use_keops = KEOPS_AVAILABLE and size >= 25000
+
+    if use_keops:
+        formula = pykeops.torch.Genred(
+            "SqDist(X,Y)",
+            [
+                f"X = Vi({X.shape[-1]})",
+                f"Y = Vj({Y.shape[-1]})",
+            ],
+            reduction_op="Min",
+            axis=0,
+        )
+        sqdist = formula(X, Y).squeeze(-1)
+    else:
+        sqdist = compute_sqdistmat(X, Y).min(-2).values  # (..., M)
+
+    return th.sqrt(th.clamp(sqdist, min=0))

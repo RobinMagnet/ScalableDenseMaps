@@ -26,8 +26,14 @@ class PointWiseMap:
     -------------------
     array_names : list of str
         Names of the arrays stored in the object. Used to transfer to torch and to GPU.
+    is_index_map : bool
+        Whether the map is intrinsically stored as a one-nonzero-per-row index array
+        (i.e. a vertex-to-vertex map). ``False`` for all matrix-valued representations.
 
     """
+
+    #: Intrinsically an index (vertex-to-vertex) representation. Overridden by P2PMap.
+    is_index_map = False
 
     def __init__(self, array_names=None):
         self.array_names = []
@@ -35,7 +41,9 @@ class PointWiseMap:
         pass
 
     def _add_array_name(self, names):
-        if type(names) is not list:
+        if names is None:
+            names = []
+        elif type(names) is not list:
             names = [names]
 
         for name in names:
@@ -207,10 +215,19 @@ class SparseMap(PointWiseMap):
         nn_map : np.ndarray
             (N2,) on the representation
         """
-        return np.asarray(self.map.argmax(-1)).squeeze(-1)  # (N2, )
+        if sparse.issparse(self.map):
+            # scipy sparse .argmax(-1) returns an (N2, 1) matrix
+            return np.asarray(self.map.argmax(-1)).squeeze(-1)  # (N2, )
+        return np.asarray(self.map).argmax(-1)  # (N2,) or (B, N2)
 
     def _to_sparse(self):
         return self.map
+
+    def to_dense(self):
+        """Returns the dense `(N2, N1)` matrix representation of the map."""
+        if sparse.issparse(self.map):
+            return self.map.toarray()
+        return np.asarray(self.map)
 
 
 class P2PMap(PointWiseMap):
@@ -226,6 +243,9 @@ class P2PMap(PointWiseMap):
         Number of points in S1. If None, n1 = p2p.max()+1
     """
 
+    #: P2PMap is stored as a one-index-per-row array (see :attr:`shape`).
+    is_index_map = True
+
     def __init__(self, p2p_21, n1=None):
 
         super().__init__(array_names=["p2p_21"])
@@ -240,14 +260,18 @@ class P2PMap(PointWiseMap):
     @property
     def shape(self):
         """
-        Shape of the map.
+        Shape of the map, as a matrix.
+
+        Even though the map is stored as an index array (see :attr:`is_index_map`), its
+        shape is reported as a matrix for consistency with the other representations. The
+        underlying index array is available as ``self.p2p_21`` (shape ``(N2,)``/``(B, N2)``).
 
         Returns
         -------------------
         shape : tuple
-            returns (N2,) or (B, N2) depending on the representation
+            (N2, N1), or (B, N2, N1) for a batched map
         """
-        return self.p2p_21.shape
+        return tuple(self.p2p_21.shape[:-1]) + (self.n2, self.n1)
 
     @property
     def n1(self):
@@ -333,6 +357,10 @@ class P2PMap(PointWiseMap):
             shape=(self.n2, self.n1),
         )
 
+    def to_dense(self):
+        """Returns the dense `(N2, N1)` matrix representation of the map."""
+        return self._to_sparse().toarray()
+
 
 class PreciseMap(SparseMap):
     """
@@ -349,16 +377,19 @@ class PreciseMap(SparseMap):
         (n2, 3) Barycentric coordinates of the points of S2 in the faces of S1.
     faces1 :  np.ndarray
         (N1, 3) All the Faces of S1.
+    n1 : int, optional
+        Number of vertices of S1. If None, inferred as `faces1.max()+1`, which is only
+        correct if every vertex of S1 belongs to at least one face.
     """
 
-    def __init__(self, v2face_21, bary_coords, faces1):
+    def __init__(self, v2face_21, bary_coords, faces1, n1=None):
         if v2face_21.ndim == 2:
             raise ValueError("Batched version not implemented yet.")
 
         self.v2f_21 = v2face_21.copy()  # (n2, )
         self.bary_coords = bary_coords.copy()  # (n2, 3)
         sparse_map = barycentric_to_precise(
-            faces1, v2face_21, bary_coords, n_vertices=None
+            faces1, v2face_21, bary_coords, n_vertices=n1
         )  # (n2, n1)
         super().__init__(map=sparse_map)
         self._nn_map = None
@@ -429,7 +460,12 @@ class EmbPreciseMap(PreciseMap):
         )
 
         # th.cuda.empty_cache()
-        super().__init__(v2face_21=v2face_21, bary_coords=bary_coords, faces1=faces1)
+        super().__init__(
+            v2face_21=v2face_21,
+            bary_coords=bary_coords,
+            faces1=faces1,
+            n1=self.emb1.shape[0],
+        )
         self._add_array_name(["emb1", "emb2"])
 
 
@@ -474,6 +510,10 @@ class KernelDenseDistMap(PointWiseMap):
 
         return np.exp(self.log_matrix - self.lse_row[..., None])
 
+    def to_dense(self):
+        """Public alias for :meth:`_to_dense`. Returns the `(N2, N1)` dense matrix."""
+        return self._to_dense()
+
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
@@ -511,20 +551,22 @@ class KernelDenseDistMap(PointWiseMap):
             self._add_array_name(["_nn_map"])
         return self._nn_map
 
-    @property
-    def mT(self):
-        """
-        Transposes the map.
+    def reverse(self):
+        r"""Row-normalized reverse map, from $S_1$ to $S_2$.
 
-        Returns another KernelDenseDistMap object with the transposed matrix.
+        This is **not** the literal matrix transpose (see :attr:`mT`): the reverse map is
+        re-normalized so that its rows sum to 1, i.e. it is the row-normalized version of
+        $\Pi^\top$. Use this to get a valid (row-stochastic) map in the reverse direction.
 
         Returns
         -------------------
-        map_t : KernelDenseDistMap
-            Transpose map
+        map_rev : KernelDenseDistMap
+            Row-normalized reverse map
         """
         obj = KernelDenseDistMap(
-            self.log_matrix.T, lse_row=self.lse_col, lse_col=self.lse_row
+            np.swapaxes(self.log_matrix, -1, -2),
+            lse_row=self.lse_col,
+            lse_col=self.lse_row,
         )
         obj._inv_nn_map, obj._nn_map = self._nn_map, self._inv_nn_map
         if obj._nn_map is not None:
@@ -532,6 +574,21 @@ class KernelDenseDistMap(PointWiseMap):
         if obj._inv_nn_map is not None:
             obj._add_array_name(["_inv_nn_map"])
         return obj
+
+    @property
+    def mT(self):
+        r"""Literal matrix transpose $\Pi^\top$ of the (dense, row-normalized) map.
+
+        .. note::
+            The transpose of a row-stochastic matrix is **not** row-stochastic. For a valid
+            reverse map (rows summing to 1), use :meth:`reverse` instead.
+
+        Returns
+        -------------------
+        map_t : SparseMap
+            Transpose map, wrapping the dense `(N1, N2)` matrix
+        """
+        return SparseMap(np.swapaxes(self._to_dense(), -1, -2))
 
     @property
     def shape(self):
@@ -606,7 +663,7 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
 
         if normalize:
             assert dist_type == "sqdist", "Normalization only supported for sqdist."
-            self.blur = blur * np.sqrt(dist.max())
+            self.blur = self.blur * np.sqrt(dist.max())
 
         log_matrix = -dist / (2 * self.blur**2)  # (N2, N1)  or (B, N2, N1)
 

@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 import torch as th
 import torch.nn as nn
 
-from .nn_utils import nn_query
+from .nn_utils import nn_query, nn_query_dist
 
 
 def nn_query_precise_torch(
@@ -110,8 +110,10 @@ def project_pc_to_triangles(
         if precompute_dmin:
             print("WARNING, `precompute_dmin` can't be True if batch size is not None")
         precompute_dmin = False
-    if precompute_dmin:
-        Deltamin = nn_query(vert_emb, points_emb)  # (n2,)
+
+    # Distance from each point to its nearest vertex (Delta_min in [1])
+    if precompute_dmin or batch_size is None:
+        Deltamin = nn_query_dist(vert_emb, points_emb)  # (n2,)
 
     # Find closest vertex on each face
     dmin = None
@@ -122,7 +124,7 @@ def project_pc_to_triangles(
     else:
         vert_sqnorms = th.linalg.norm(vert_emb, dim=1) ** 2
         points_sqnorm = th.linalg.norm(points_emb, dim=1) ** 2
-        dmin_params = {"vert_sqnorms": vert_sqnorms, "points_sqnorm": points_sqnorm}
+        dmin_params = {"vert_sqnorm": vert_sqnorms, "points_sqnorm": points_sqnorm}
 
     # Iterate along all points
     if precompute_dmin or batch_size is None:
@@ -145,8 +147,10 @@ def project_pc_to_triangles(
         iterable = range(n_batches) if not verbose else tqdm(range(n_batches))
 
         # Initialize output
-        face_match = th.zeros(n_points, dtype=int, device=vert_emb.device)
-        bary_coord = th.zeros(n_points, 3, device=vert_emb.device)
+        face_match = th.zeros(n_points, dtype=th.long, device=vert_emb.device)
+        bary_coord = th.zeros(
+            n_points, 3, device=vert_emb.device, dtype=vert_emb.dtype
+        )
 
         for batchind in iterable:
             batch_minmax = [
@@ -163,7 +167,7 @@ def project_pc_to_triangles(
                 points_sqnorm=points_sqnorm[batch_minmax[0] : batch_minmax[1]],
             )
 
-            Deltamin_batch = nn_query(
+            Deltamin_batch = nn_query_dist(
                 vert_emb, points_emb[batch_minmax[0] : batch_minmax[1]].contiguous()
             )
 
@@ -476,7 +480,9 @@ class PointsTriangleProjLayer(nn.Module):
         # Region 4.1.2
         # print('R4', (-d[region_4_12] / a[region_4_12]).max(), (-d[region_4_12] / a[region_4_12]).min())
         final_s[region_4_12] = -d[region_4_12] / a[region_4_12]
-        final_dists[region_4_12] = d[region_4_12] * s[region_4_12] + f[region_4_12]
+        final_dists[region_4_12] = (
+            d[region_4_12] * final_s[region_4_12] + f[region_4_12]
+        )
 
         # Region 4.2
         # final_s[region_4_2] = 0  # Useless already done
@@ -492,7 +498,9 @@ class PointsTriangleProjLayer(nn.Module):
         # Region 4.2.2.2
         # print('R4.2', (-e[region_4_222] / c[region_4_222]).max(), (-e[region_4_222] / c[region_4_222]).min())
         final_t[region_4_222] = -e[region_4_222] / c[region_4_222]
-        final_dists[region_4_222] = e[region_4_222] * t[region_4_222] + f[region_4_222]
+        final_dists[region_4_222] = (
+            e[region_4_222] * final_t[region_4_222] + f[region_4_222]
+        )
         # print('R4 final', final_s.max(), final_t.max())
         return final_s, final_t, final_dists
 
@@ -807,9 +815,15 @@ class PointsTriangleProjLayer(nn.Module):
         n_points = points.shape[0]
         n_triangles = triangles.shape[0]
 
-        final_s = th.zeros(n_points, n_triangles, device=points.device)  # (n,m)
-        final_t = th.zeros(n_points, n_triangles, device=points.device)  # (n,m)
-        final_dists = th.zeros(n_points, n_triangles, device=points.device)  # (n, m)
+        final_s = th.zeros(
+            n_points, n_triangles, device=points.device, dtype=points.dtype
+        )  # (n,m)
+        final_t = th.zeros(
+            n_points, n_triangles, device=points.device, dtype=points.dtype
+        )  # (n,m)
+        final_dists = th.zeros(
+            n_points, n_triangles, device=points.device, dtype=points.dtype
+        )  # (n, m)
 
         bases = triangles[:, 0]  # (m,p)
         axis1 = triangles[:, 1] - bases  # (m,p)

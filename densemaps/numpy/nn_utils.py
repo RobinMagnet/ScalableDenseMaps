@@ -26,34 +26,22 @@ def knn_query(X, Y, k=1, return_distance=False, n_jobs=1):
     matches : np.ndarray
         (n2,k) or (n2,) if k=1 (with optional first batch dimension)- nearest neighbor
     """
-    if X.shape == 3:
-        assert Y.shape == 3
-        if X.shape[0] != 1 and Y.shape[0] != 1:
+    if X.ndim == 3 and Y.ndim == 3 and X.shape[0] != Y.shape[0]:
+        assert (
+            X.shape[0] == 1 or Y.shape[0] == 1
+        ), "Batch sizes of X and Y should match, or one of them should be 1"
+        # Only one of the two has a batch dimension of 1: broadcast it
+        if X.shape[0] == 1:
             all_res = [
                 knn_query(
-                    X[i], Y[i], k=k, return_distance=return_distance, n_jobs=n_jobs
-                )
-                for i in range(X.shape[0])
-            ]
-        elif X.shape[0] == 1 and Y.shape[0] != 1:
-            all_res = [
-                knn_query(
-                    X.squeeze(),
-                    Y[i],
-                    k=k,
-                    return_distance=return_distance,
-                    n_jobs=n_jobs,
+                    X[0], Y[i], k=k, return_distance=return_distance, n_jobs=n_jobs
                 )
                 for i in range(Y.shape[0])
             ]
         else:
             all_res = [
                 knn_query(
-                    X[i],
-                    Y.squeeze(),
-                    k=k,
-                    return_distance=return_distance,
-                    n_jobs=n_jobs,
+                    X[i], Y[0], k=k, return_distance=return_distance, n_jobs=n_jobs
                 )
                 for i in range(X.shape[0])
             ]
@@ -102,24 +90,26 @@ def compute_sqdistmat(X, Y, normalized=False):
 
     Parameters
     ----------
-    X : torch.Tensor
+    X : np.ndarray
         The first set of points, of shape (N, D) or (B, N, D).
-    Y : torch.Tensor
+    Y : np.ndarray
         The second set of points, of shape (M, D) or (B, M, D).
     normalized : bool
         Whether the points are normalized to have unit norm.
 
     Returns
     -------
-    distmat : torch.Tensor
+    distmat : np.ndarray
         The pairwise squared Euclidean distance matrix between X and Y, of shape (N, M) or (B, N, M).
     """
+    Y_t = np.swapaxes(Y, -1, -2)  # (D, M) or (B, D, M)
+
     if not normalized:
         # (..., N, 1) + (...,1, M)
         return (
-            np.square(X).sum(-1).unsqueeze(-1)
-            + np.square(Y).sum(-1).unsqueeze(-2)
-            - 2 * (X @ Y.mT)
+            np.square(X).sum(-1)[..., :, None]
+            + np.square(Y).sum(-1)[..., None, :]
+            - 2 * (X @ Y_t)
         )
     else:
-        return 2 - 2 * X @ Y.mT
+        return 2 - 2 * X @ Y_t

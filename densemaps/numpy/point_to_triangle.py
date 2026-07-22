@@ -60,7 +60,7 @@ def nn_query_precise_np(
         targets = (bary_coords[..., None] * vert_emb[faces[face_match]]).sum(
             1
         )  # (n2, p)
-        dists = np.linalg.norm(targets - points_emb, dim=-1)  # (n2,)
+        dists = np.linalg.norm(targets - points_emb, axis=-1)  # (n2,)
 
         return face_match, bary_coords, dists
 
@@ -502,6 +502,11 @@ def project_to_mesh(
 
     query_faceinds = np.where(deltamin - lmax < Deltamin[vertind])[0]  # (p)
 
+    # Fall back to all faces if the pre-selection filtered everything out
+    # (can happen with numerical round-off on the threshold).
+    if len(query_faceinds) == 0:
+        query_faceinds = np.arange(faces.shape[0])
+
     # Projection can be done on multiple triangles
     query_triangles = vert_emb[faces[query_faceinds]]  # (p, 3, k1)
     query_point = points_emb[vertind]
@@ -512,7 +517,7 @@ def project_to_mesh(
         min_dist, proj, min_bary = pointTriangleDistance(
             query_triangles.squeeze(), query_point, return_bary=True
         )
-        return query_faceinds, min_bary
+        return query_faceinds[0], min_bary
 
     dists, proj, bary_coords = point_to_triangles_projection(
         query_triangles, query_point, return_bary=True
@@ -705,7 +710,7 @@ def point_to_triangles_projection(triangles, point, return_bary=False):
         final_dists[inds4_11] = a[inds4_11] + 2.0 * d[inds4_11] + f[inds4_11]
 
         final_s[inds4_12] = -d[inds4_12] / a[inds4_12]
-        final_dists[inds4_12] = d[inds4_12] * s[inds4_12] + f[inds4_12]
+        final_dists[inds4_12] = d[inds4_12] * final_s[inds4_12] + f[inds4_12]
 
         # SECOND PART - SUBDIVIDE IN 2
         final_s[inds4_2] = 0  # Useless already done
@@ -726,7 +731,7 @@ def point_to_triangles_projection(triangles, point, return_bary=False):
         final_dists[inds4_221] = c[inds4_221] + 2.0 * e[inds4_221] + f[inds4_221]
 
         final_t[inds4_222] = -e[inds4_222] / c[inds4_222]
-        final_dists[inds4_222] = e[inds4_222] * t[inds4_222] + f[inds4_222]
+        final_dists[inds4_222] = e[inds4_222] * final_t[inds4_222] + f[inds4_222]
 
     if len(inds_3) > 0:
         # print('Case 3', inds_3)

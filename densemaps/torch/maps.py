@@ -7,6 +7,7 @@ import scipy.sparse as sparse
 
 try:
     import pykeops
+    import pykeops.torch
 
     KEOPS_AVAILABLE = True
 except ImportError:
@@ -36,6 +37,7 @@ def _sparse_matmul(x, y):
         (N, Q) or (B, N, Q) tensor with (potentially broadcaster multiplication)
     """
     assert x.shape[-1] == y.shape[-2], "Inner dimensions should match"
+    x, y = _promote_dtype(x, y)
     if x.ndim > 3:
         raise NotImplementedError("Multi Batched multiplication not implemented yet.")
     elif x.ndim == 3:
@@ -48,6 +50,54 @@ def _sparse_matmul(x, y):
         return th.stack([x @ y[i] for i in range(y.shape[0])])
 
     return x @ y
+
+
+def _promote_dtype(x, y):
+    """Cast x and y to their common (promoted) dtype so mixed-precision matmul works.
+
+    P2PMap / PreciseMap build their sparse representations with float32 values, so composing
+    or multiplying with a float64 map would otherwise raise a dtype mismatch.
+    """
+    target = th.promote_types(x.dtype, y.dtype)
+    if x.dtype != target:
+        x = x.to(target)
+    if y.dtype != target:
+        y = y.to(target)
+    return x, y
+
+
+def _mixed_matmul(x, y):
+    """
+    Matrix multiplication where exactly one of x, y is a (potentially batched) sparse
+    tensor and the other is dense. Sparse tensors do not support batched ``@``, so the
+    batch dimension is handled explicitly, with broadcasting of a batch size of 1.
+
+    Parameters
+    -------------------
+    x : torch.Tensor
+        (N, P) or (B, N, P), sparse or dense
+    y : torch.Tensor
+        (P, Q) or (B, P, Q), sparse or dense
+
+    Output
+    -------------------
+    prod : torch.Tensor
+        (N, Q) or (B, N, Q)
+    """
+    assert x.shape[-1] == y.shape[-2], "Inner dimensions should match"
+    x, y = _promote_dtype(x, y)
+    if x.ndim > 3 or y.ndim > 3:
+        raise NotImplementedError("Multi Batched multiplication not implemented yet.")
+
+    if x.ndim == 2 and y.ndim == 2:
+        return x @ y
+    elif x.ndim == 3 and y.ndim == 3:
+        assert x.shape[0] == y.shape[0], "Batch size of x and y should match"
+        return th.stack([x[i] @ y[i] for i in range(x.shape[0])])
+    elif x.ndim == 3:  # y is 2D
+        return th.stack([x[i] @ y for i in range(x.shape[0])])
+    else:  # x is 2D, y is 3D
+        return th.stack([x @ y[i] for i in range(y.shape[0])])
 
 
 class PointWiseMap:
@@ -69,8 +119,14 @@ class PointWiseMap:
     -------------------
     tensor_names : list of str
         Names of the tensors stored in the object. Used to transfer to GPU.
+    is_index_map : bool
+        Whether the map is intrinsically stored as a one-nonzero-per-row index array
+        (i.e. a vertex-to-vertex map). ``False`` for all matrix-valued representations.
 
     """
+
+    #: Intrinsically an index (vertex-to-vertex) representation. Overridden by P2PMap.
+    is_index_map = False
 
     def __init__(self, tensor_names=None):
         self.tensor_names = []
@@ -78,7 +134,9 @@ class PointWiseMap:
         pass
 
     def _add_tensor_name(self, names):
-        if type(names) is not list:
+        if names is None:
+            names = []
+        elif type(names) is not list:
             names = [names]
 
         for name in names:
@@ -168,32 +226,13 @@ class PointWiseMap:
 
             if is_other_sparse and is_self_sparse:
                 prod = _sparse_matmul(self_sparse, other_sparse)
-                return SparseMap(prod)
-            elif ~is_self_sparse and ~is_other_sparse:
+            elif not is_self_sparse and not is_other_sparse:
+                self_sparse, other_sparse = _promote_dtype(self_sparse, other_sparse)
                 prod = self_sparse @ other_sparse
-                return SparseMap(prod)
-            elif is_other_sparse:
-                if other_sparse.ndim == 3:
-                    prod = th.stack(
-                        [
-                            self_sparse @ other_sparse[i]
-                            for i in range(other_sparse.shape[0])
-                        ]
-                    )
-                else:
-                    prod = self_sparse @ other_sparse
-            elif is_self_sparse:
-                if self_sparse.ndim == 3:
-                    prod = th.stack(
-                        [
-                            self_sparse[i] @ other_sparse
-                            for i in range(self_sparse.shape[0])
-                        ]
-                    )
-                else:
-                    prod = self_sparse @ other_sparse
             else:
-                raise ValueError("Not implemented yet.")
+                # Exactly one operand is a (potentially batched) sparse tensor.
+                # Sparse tensors don't support batched `@`, so pair/broadcast by hand.
+                prod = _mixed_matmul(self_sparse, other_sparse)
 
             return SparseMap(prod)
 
@@ -287,19 +326,43 @@ class SparseMap(PointWiseMap):
         f_pb : torch.Tensor
             (N2,), (N2, p) or (B, N2, p)
         """
-        if self.map.ndim == 3:
+        mat = self.map
+        if mat.dtype != f.dtype:
+            mat = mat.to(th.promote_types(mat.dtype, f.dtype))
+            f = f.to(th.promote_types(self.map.dtype, f.dtype))
+        if mat.ndim == 3:
             if f.ndim < 3:
-                f_pb = th.stack([self.map[i] @ f for i in range(self.map.shape[0])])
+                f_pb = th.stack([mat[i] @ f for i in range(mat.shape[0])])
             else:
                 assert (
-                    f.shape[0] == self.map.shape[0]
+                    f.shape[0] == mat.shape[0]
                 ), "Batch size of f and map should match"
-                f_pb = th.stack([self.map[i] @ f[i] for i in range(f.shape[0])])
+                f_pb = th.stack([mat[i] @ f[i] for i in range(f.shape[0])])
         else:
-            f_pb = self.map @ f
+            f_pb = mat @ f
         return f_pb
 
+    def get_nn(self):
+        """Outputs the nearest neighbor map.
+        The nearest neighbor map associates to each point of S2 the index of the
+        highest-weight point in S1 (argmax along the last dimension).
+
+        Returns
+        -------------------
+        nn_map : torch.Tensor
+            (N2,) or (B, N2) depending on the representation
+        """
+        if self.map.layout is th.sparse_coo:
+            return self.map.to_dense().argmax(-1)
+        return self.map.argmax(-1)
+
     def _to_sparse(self):
+        return self.map
+
+    def to_dense(self):
+        """Returns the dense `(N2, N1)` (or `(B, N2, N1)`) tensor representation."""
+        if self.map.layout is th.sparse_coo:
+            return self.map.to_dense()
         return self.map
 
 
@@ -316,6 +379,9 @@ class P2PMap(PointWiseMap):
     n1 : int or None
         Number of points in S1. If None, n1 = p2p.max()+1
     """
+
+    #: P2PMap is stored as a one-index-per-row tensor (see :attr:`shape`).
+    is_index_map = True
 
     def __init__(self, p2p_21, n1=None):
         super().__init__(tensor_names=["p2p_21"])
@@ -342,14 +408,18 @@ class P2PMap(PointWiseMap):
     @property
     def shape(self):
         """
-        Shape of the map.
+        Shape of the map, as a matrix.
+
+        Even though the map is stored as an index array (see :attr:`is_index_map`), its
+        shape is reported as a matrix for consistency with the other representations. The
+        underlying index tensor is available as ``self.p2p_21`` (shape ``(N2,)``/``(B, N2)``).
 
         Returns
         -------------------
-        shape : tuple
-         return (n2,) or (B, n2)
+        shape : torch.Size
+            (N2, N1), or (B, N2, N1) for a batched map
         """
-        return self.p2p_21.shape
+        return th.Size(tuple(self.p2p_21.shape[:-1]) + (self.n2, self.n1))
 
     def pull_back(self, f):
         """Pull back a function $f$.
@@ -447,6 +517,10 @@ class P2PMap(PointWiseMap):
                 ]
             )
 
+    def to_dense(self):
+        """Returns the dense `(N2, N1)` (or `(B, N2, N1)`) tensor representation."""
+        return self._to_sparse().to_dense()
+
     def _to_np_sparse(self):
         assert self.p2p_21.ndim == 1, "Batched version not implemented yet."
 
@@ -477,9 +551,12 @@ class PreciseMap(PointWiseMap):
         (n2, 3) Barycentric coordinates of the points of S2 in the faces of S1.
     faces1 :  torch.Tensor
         (N1, 3) All the Faces of S1.
+    n1 : int, optional
+        Number of vertices of S1. If None, inferred as `faces1.max()+1`, which is only
+        correct if every vertex of S1 belongs to at least one face.
     """
 
-    def __init__(self, v2face_21, bary_coords, faces1):
+    def __init__(self, v2face_21, bary_coords, faces1, n1=None):
         """
         Point to barycentric map from a set S2 to a surface S1.
 
@@ -493,7 +570,7 @@ class PreciseMap(PointWiseMap):
         self.faces1 = faces1  # (N1, 3)
 
         self.n2 = self.v2face_21.shape[-1]
-        self.n1 = self.faces1.max() + 1
+        self.n1 = int(self.faces1.max()) + 1 if n1 is None else int(n1)
 
         self._nn_map = None
 
@@ -513,21 +590,27 @@ class PreciseMap(PointWiseMap):
         -------------------
         pull_back : (N2, p)  or (B, N2, p)
         """
-        if self.v2face_21.ndim == 1:
-            if f.ndim == 1 or f.ndim == 2:
-                f_selected = f[self.faces1[self.v2face_21]]  # (N2, 3, p) or (N2, 3)
-                if f.ndim == 1:
-                    f_pb = (self.bary_coords * f_selected).sum(1)
-                else:
-                    f_pb = (self.bary_coords.unsqueeze(-1) * f_selected).sum(1)
-                    # print('Selected2', f_pb.max())
+        if self.v2face_21.ndim != 1:
+            raise NotImplementedError("Batched version not implemented yet.")
 
-            elif f.ndim == 3:
-                f_selected = f[: self.faces1[self.v2face_21]]  # (B, N2, 3, p)
-                f_pb = (self.bary_coords.unsqueeze(0).unsqueeze(-1) * f_selected).sum(1)
+        target_faces = self.faces1[self.v2face_21]  # (N2, 3)
+
+        if f.ndim == 1:
+            f_selected = f[target_faces]  # (N2, 3)
+            f_pb = (self.bary_coords * f_selected).sum(1)  # (N2,)
+
+        elif f.ndim == 2:
+            f_selected = f[target_faces]  # (N2, 3, p)
+            f_pb = (self.bary_coords.unsqueeze(-1) * f_selected).sum(1)  # (N2, p)
+
+        elif f.ndim == 3:
+            f_selected = f[:, target_faces]  # (B, N2, 3, p)
+            f_pb = (self.bary_coords.unsqueeze(0).unsqueeze(-1) * f_selected).sum(
+                2
+            )  # (B, N2, p)
 
         else:
-            raise NotImplementedError("Batched version not implemented yet.")
+            raise ValueError("Function is only dim 1, 2 or 3")
 
         return f_pb
 
@@ -542,8 +625,8 @@ class PreciseMap(PointWiseMap):
 
         return self._nn_map
 
-    @property
-    def mT(self):
+    def _to_sparse(self):
+        """Builds the `(n2, n1)` sparse barycentric matrix representation of the map."""
         target_faces = self.faces1[self.v2face_21]  # (n2, 3)
 
         In = th.tile(th.arange(self.n2, device=self.v2face_21.device), (3,))  # (3*n2)
@@ -554,16 +637,24 @@ class PreciseMap(PointWiseMap):
             [self.bary_coords[:, 0], self.bary_coords[:, 1], self.bary_coords[:, 2]]
         )  # (3*n2)
 
-        precise_map = th.sparse_coo_tensor(
+        return th.sparse_coo_tensor(
             th.stack([In, Jn]), Sn, (self.n2, self.n1)
         ).coalesce()
-        return SparseMap(precise_map).mT
+
+    @property
+    def mT(self):
+        return SparseMap(self._to_sparse()).mT
+
+    def to_dense(self):
+        """Returns the dense `(N2, N1)` tensor representation."""
+        return self._to_sparse().to_dense()
 
     def _to_np_sparse(self):
         return barycentric_to_precise(
             self.faces1.cpu().numpy(),
             self.v2face_21.cpu().numpy(),
             self.bary_coords.cpu().numpy(),
+            n_vertices=self.n1,
         )
 
 
@@ -579,8 +670,6 @@ class EmbP2PMap(P2PMap):
         (N1, p) or (B, N1, p)
     emb2 : torch.Tensor
         (N2, p) or (B, N2, p)
-    n_jobs : int
-        Number of jobs to use for the NN query
     """
 
     def __init__(self, emb1, emb2):
@@ -631,7 +720,7 @@ class EmbPreciseMap(PreciseMap):
         )
 
         # th.cuda.empty_cache()
-        super().__init__(v2face_21, bary_coords, faces1)
+        super().__init__(v2face_21, bary_coords, faces1, n1=self.emb1.shape[0])
         self._add_tensor_name(["emb1", "emb2"])
 
 
@@ -677,6 +766,10 @@ class KernelDenseDistMap(PointWiseMap):
 
         return th.exp(self.log_matrix - self.lse_row.unsqueeze(-1))
 
+    def to_dense(self):
+        """Public alias for :meth:`_to_dense`. Returns the `(N2, N1)` dense matrix."""
+        return self._to_dense()
+
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
@@ -714,17 +807,17 @@ class KernelDenseDistMap(PointWiseMap):
             self._add_tensor_name(["_nn_map"])
         return self._nn_map
 
-    @property
-    def mT(self):
-        """
-        Transposes the map.
+    def reverse(self):
+        r"""Row-normalized reverse map, from $S_1$ to $S_2$.
 
-        Returns another KernelDenseDistMap object with the transposed matrix.
+        This is **not** the literal matrix transpose (see :attr:`mT`): the reverse map is
+        re-normalized so that its rows sum to 1, i.e. it is the row-normalized version of
+        $\Pi^\top$. Use this to get a valid (row-stochastic) map in the reverse direction.
 
         Returns
         -------------------
-        map_t : KernelDenseDistMap
-            Transpose map
+        map_rev : KernelDenseDistMap
+            Row-normalized reverse map
         """
         obj = KernelDenseDistMap(
             self.log_matrix.transpose(-1, -2),
@@ -737,6 +830,21 @@ class KernelDenseDistMap(PointWiseMap):
         if obj._inv_nn_map is not None:
             obj._add_tensor_name(["_inv_nn_map"])
         return obj
+
+    @property
+    def mT(self):
+        r"""Literal matrix transpose $\Pi^\top$ of the (dense, row-normalized) map.
+
+        .. note::
+            The transpose of a row-stochastic matrix is **not** row-stochastic. For a valid
+            reverse map (rows summing to 1), use :meth:`reverse` instead.
+
+        Returns
+        -------------------
+        map_t : SparseMap
+            Transpose map, wrapping the dense `(N1, N2)` matrix
+        """
+        return SparseMap(self._to_dense().transpose(-1, -2))
 
     @property
     def shape(self):
@@ -802,14 +910,14 @@ class EmbKernelDenseDistMap(KernelDenseDistMap):
 
         self.dist_type = dist_type
 
-        self.blur = th.ones(1, device=self.emb1.device)
+        self.blur = th.ones(1, device=self.emb1.device, dtype=self.emb1.dtype)
         if blur is not None:
             self.blur = self.blur * blur
 
         if normalize:
             assert dist_type == "sqdist", "Normalization only supported for sqdist."
             with th.no_grad():
-                self.blur = blur * th.sqrt(dist.max())
+                self.blur = self.blur * th.sqrt(dist.max())
 
         log_matrix = -dist / (2 * th.square(self.blur))  # (N2, N1)  or (B, N2, N1)
 
@@ -852,6 +960,11 @@ class KernelDistMap(PointWiseMap):
     ):
 
         super().__init__(tensor_names=["emb1", "emb2", "blur"])
+        if not KEOPS_AVAILABLE:
+            raise ImportError(
+                "KernelDistMap requires pykeops. Install it, or use "
+                "EmbKernelDenseDistMap for a dense (non-scalable) equivalent."
+            )
         assert dist_type in ["sqdist", "inner"], "Invalid distance type."
         self.dist_type = dist_type
 
@@ -867,7 +980,7 @@ class KernelDistMap(PointWiseMap):
                 self.emb2, p=2, dim=-1
             )  # (N2, p) or (B, N2, p)
 
-        self.blur = th.ones(1, device=self.emb1.device)
+        self.blur = th.ones(1, device=self.emb1.device, dtype=self.emb1.dtype)
         if blur is not None:
             self.blur = self.blur * blur
 
@@ -933,6 +1046,15 @@ class KernelDistMap(PointWiseMap):
 
         return densemap._to_dense()
 
+    def to_dense(self):
+        """Materializes the full `(N2, N1)` dense matrix.
+
+        .. note::
+            This defeats the memory-scalable design of :class:`KernelDistMap`. It is only
+            intended for inspection / small problems.
+        """
+        return self._to_dense()
+
     def pull_back(self, f):
         """Pull back a function $f$.
         Four possibilities:
@@ -987,14 +1109,41 @@ class KernelDistMap(PointWiseMap):
         return f_pb
 
     def get_nn(self):
+        """Highest-weight point of S1 for each point of S2.
+
+        For ``dist_type="sqdist"`` this is the nearest neighbour (min squared distance).
+        For ``dist_type="inner"`` the kernel is monotonically increasing in the inner
+        product, so it is the point of **maximum inner product**, not the nearest neighbour.
+        """
         if self._nn_map is None:
-            self._nn_map = nn_query(self.emb1, self.emb2)
+            if self.dist_type == "inner":
+                self._nn_map = self._inner_argmax()
+            else:
+                self._nn_map = nn_query(self.emb1, self.emb2)
             self._add_tensor_name(["_nn_map"])
 
         return self._nn_map
 
-    @property
-    def mT(self):
+    def _inner_argmax(self):
+        """For each point of emb2, index of the emb1 point with maximum inner product."""
+        formula = pykeops.torch.Genred(
+            "(X|Y)",
+            [
+                f"X = Vi({self.emb1.shape[-1]})",
+                f"Y = Vj({self.emb2.shape[-1]})",
+            ],
+            reduction_op="ArgMax",
+            axis=0,
+        )
+        return formula(self.emb1, self.emb2).squeeze(-1).long()
+
+    def reverse(self):
+        r"""Row-normalized reverse map, from $S_1$ to $S_2$ (memory-scalable).
+
+        This is **not** the literal matrix transpose (see :attr:`mT`): it is a valid
+        row-stochastic :class:`KernelDistMap` in the reverse direction, obtained by swapping
+        the two embeddings.
+        """
         invmap = KernelDistMap(
             self.emb2,
             self.emb1,
@@ -1004,3 +1153,20 @@ class KernelDistMap(PointWiseMap):
         )
         invmap.blur = self.blur
         return invmap
+
+    @property
+    def mT(self):
+        r"""Literal matrix transpose $\Pi^\top$.
+
+        .. note::
+            The transpose of a row-stochastic matrix is not row-stochastic, and it cannot be
+            expressed as a memory-scalable :class:`KernelDistMap`. This materializes the full
+            dense `(N1, N2)` matrix, defeating memory scalability. For a scalable reverse map
+            use :meth:`reverse` instead.
+
+        Returns
+        -------------------
+        map_t : SparseMap
+            Transpose map, wrapping the dense `(N1, N2)` matrix
+        """
+        return SparseMap(self._to_dense().transpose(-1, -2))
